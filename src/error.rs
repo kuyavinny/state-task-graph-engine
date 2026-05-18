@@ -56,6 +56,12 @@ pub enum AppError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    #[error("Graph validation failed with {count} error(s)")]
+    GraphValidationFailed {
+        count: usize,
+        errors: Vec<crate::model::ValidationError>,
+    },
 }
 
 impl AppError {
@@ -78,6 +84,7 @@ impl AppError {
             AppError::NotImplemented(_) => ErrorCode::NotImplemented,
             AppError::Io(_) => ErrorCode::IoError,
             AppError::Serialization(_) => ErrorCode::SerializationError,
+            AppError::GraphValidationFailed { .. } => ErrorCode::ValidationFailed,
         }
     }
 
@@ -112,6 +119,10 @@ impl AppError {
             }),
             AppError::AtomicWriteFailed { message } => serde_json::json!({
                 "message": message,
+            }),
+            AppError::GraphValidationFailed { count, errors } => serde_json::json!({
+                "count": count,
+                "errors": errors,
             }),
             _ => serde_json::Value::Object(serde_json::Map::new()),
         }

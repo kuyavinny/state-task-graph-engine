@@ -68,13 +68,13 @@ fn init_fails_if_already_initialized() {
 fn uninitialized_subcommands_return_not_implemented() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
-    // validate
+    // validate is implemented in PR#2 — needs a graph file
     stg()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains("NOT_IMPLEMENTED"));
+        .stdout(predicate::str::contains("TASK_NOT_FOUND"));
 
     // status
     stg()

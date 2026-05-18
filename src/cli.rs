@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::io;
 use crate::response::ResponseEnvelope;
+use crate::validate;
 
 use clap::{Parser, Subcommand};
 
@@ -143,7 +144,25 @@ impl Cli {
                 Ok(())
             }
             // Remaining commands are stubs for later PRs
-            Commands::Validate => Err(AppError::NotImplemented("validate".into())),
+            Commands::Validate => {
+                let dir = std::env::current_dir()?;
+                let graph = io::read_graph(&dir)?;
+                let validation_errors = validate::validate_graph(&graph);
+                if validation_errors.is_empty() {
+                    let envelope: ResponseEnvelope<serde_json::Value> = ResponseEnvelope::ok(
+                        graph.graph_revision,
+                        serde_json::json!({"valid": true}),
+                    );
+                    println!("{}", serde_json::to_string_pretty(&envelope)?);
+                    Ok(())
+                } else {
+                    let count = validation_errors.len();
+                    Err(AppError::GraphValidationFailed {
+                        count,
+                        errors: validation_errors,
+                    })
+                }
+            }
             Commands::Status => Err(AppError::NotImplemented("status".into())),
             Commands::Next => Err(AppError::NotImplemented("next".into())),
             Commands::Claim { .. } => Err(AppError::NotImplemented("claim".into())),

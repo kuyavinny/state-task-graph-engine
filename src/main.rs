@@ -5,6 +5,7 @@ mod error;
 mod io;
 mod model;
 mod response;
+mod validate;
 
 fn main() {
     let cli = cli::Cli::parse();

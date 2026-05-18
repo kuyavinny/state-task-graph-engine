@@ -168,6 +168,7 @@ pub enum ErrorCode {
     IoError,
     SerializationError,
     Internal,
+    ValidationFailed,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -190,8 +191,17 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::IoError => write!(f, "IO_ERROR"),
             ErrorCode::SerializationError => write!(f, "SERIALIZATION_ERROR"),
             ErrorCode::Internal => write!(f, "INTERNAL"),
+            ErrorCode::ValidationFailed => write!(f, "VALIDATION_FAILED"),
         }
     }
+}
+
+/// A single validation error found during graph validation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ValidationError {
+    pub code: ErrorCode,
+    pub message: String,
+    pub details: serde_json::Value,
 }
 
 #[cfg(test)]
