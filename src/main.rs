@@ -4,6 +4,7 @@ mod cli;
 mod error;
 mod io;
 mod model;
+mod reconcile;
 mod response;
 mod validate;
 

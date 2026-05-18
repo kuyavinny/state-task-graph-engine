@@ -76,21 +76,21 @@ fn uninitialized_subcommands_return_not_implemented() {
         .failure()
         .stdout(predicate::str::contains("TASK_NOT_FOUND"));
 
-    // status
+    // status — implemented in PR#3, needs a graph file
     stg()
         .arg("status")
         .current_dir(tmp.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains("NOT_IMPLEMENTED"));
+        .stdout(predicate::str::contains("TASK_NOT_FOUND"));
 
-    // next
+    // next — implemented in PR#3, needs a graph file
     stg()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains("NOT_IMPLEMENTED"));
+        .stdout(predicate::str::contains("TASK_NOT_FOUND"));
 }
 
 #[test]

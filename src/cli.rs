@@ -1,5 +1,7 @@
 use crate::error::AppError;
 use crate::io;
+use crate::model::Status;
+use crate::reconcile;
 use crate::response::ResponseEnvelope;
 use crate::validate;
 
@@ -163,8 +165,76 @@ impl Cli {
                     })
                 }
             }
-            Commands::Status => Err(AppError::NotImplemented("status".into())),
-            Commands::Next => Err(AppError::NotImplemented("next".into())),
+            Commands::Status => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::load_validate_reconcile(&dir)?;
+
+                let mut counts = std::collections::HashMap::new();
+                for node in &result.graph.nodes {
+                    let status_str = node.status.to_string();
+                    *counts.entry(status_str).or_insert(0) += 1;
+                }
+
+                let warnings: Vec<String> = result
+                    .warnings
+                    .iter()
+                    .map(|w| match w {
+                        reconcile::ReconciliationWarning::EventLogDesync {
+                            graph_revision,
+                            event_log_revision,
+                        } => format!(
+                            "EVENT_LOG_DESYNC: Graph revision {} does not match event log revision {}",
+                            graph_revision, event_log_revision
+                        ),
+                    })
+                    .collect();
+
+                let data = serde_json::json!({
+                    "revision": result.graph.graph_revision,
+                    "node_count": result.graph.nodes.len(),
+                    "status": counts,
+                });
+
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok_with_warnings(result.graph.graph_revision, data, warnings);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Next => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::load_validate_reconcile(&dir)?;
+
+                // Find highest-priority READY node
+                let next_task = result
+                    .graph
+                    .nodes
+                    .iter()
+                    .filter(|n| n.status == Status::Ready)
+                    .min_by(|a, b| {
+                        // priority descending, then created_at ascending, then id ascending
+                        b.priority
+                            .cmp(&a.priority)
+                            .then(a.created_at.cmp(&b.created_at))
+                            .then(a.id.cmp(&b.id))
+                    });
+
+                let data = match next_task {
+                    Some(node) => serde_json::json!({
+                        "id": node.id,
+                        "title": node.title,
+                        "priority": node.priority,
+                        "status": node.status.to_string(),
+                    }),
+                    None => serde_json::json!({
+                        "message": "No READY tasks available",
+                    }),
+                };
+
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
             Commands::Claim { .. } => Err(AppError::NotImplemented("claim".into())),
             Commands::Heartbeat { .. } => Err(AppError::NotImplemented("heartbeat".into())),
             Commands::Release { .. } => Err(AppError::NotImplemented("release".into())),

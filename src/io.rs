@@ -117,6 +117,30 @@ pub fn append_event(project_dir: &Path, event_json: &str) -> Result<(), AppError
     Ok(())
 }
 
+/// Append all events to the JSONL log in a single batch (single file open).
+/// Reduces the commit-window for partial writes compared to individual calls.
+pub fn append_events_batch(
+    project_dir: &Path,
+    events: &[crate::model::Event],
+) -> Result<(), AppError> {
+    let events_path = project_dir.join(AGENT_DIR).join(EVENTS_FILE);
+    let mut lines = Vec::new();
+    for event in events {
+        let json = serde_json::to_string(event)?;
+        lines.push(json);
+    }
+    std::fs::create_dir_all(project_dir.join(AGENT_DIR))?;
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&events_path)?;
+    for line in &lines {
+        writeln!(file, "{}", line)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
