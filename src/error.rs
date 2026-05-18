@@ -76,8 +76,8 @@ impl AppError {
             AppError::EventLogDesync => ErrorCode::EventLogDesync,
             AppError::AtomicWriteFailed { .. } => ErrorCode::AtomicWriteFailed,
             AppError::NotImplemented(_) => ErrorCode::NotImplemented,
-            AppError::Io(_) => ErrorCode::AtomicWriteFailed,
-            AppError::Serialization(_) => ErrorCode::InvalidSchema,
+            AppError::Io(_) => ErrorCode::IoError,
+            AppError::Serialization(_) => ErrorCode::SerializationError,
         }
     }
 

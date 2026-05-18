@@ -52,10 +52,16 @@ impl<T: Serialize> ResponseEnvelope<T> {
     }
 
     /// Create a failure envelope from an AppError.
-    pub fn from_error(err: &AppError) -> ResponseEnvelope<serde_json::Value> {
+    ///
+    /// `graph_revision` is included when the current revision is known
+    /// (e.g., after graph load), enabling clients to retry with the correct revision.
+    pub fn from_error(
+        err: &AppError,
+        graph_revision: Option<u64>,
+    ) -> ResponseEnvelope<serde_json::Value> {
         ResponseEnvelope {
             ok: false,
-            graph_revision: None,
+            graph_revision,
             warnings: None,
             data: None,
             error: Some(ErrorBody {
@@ -72,6 +78,27 @@ impl ResponseEnvelope<serde_json::Value> {
     #[allow(dead_code)]
     pub fn ok_empty(revision: u64) -> Self {
         Self::ok(revision, serde_json::Value::Object(serde_json::Map::new()))
+    }
+
+    /// Pre-computed fallback JSON using the INTERNAL error code.
+    /// Used when serde fails to serialize a normal error envelope.
+    pub fn internal_fallback_json() -> String {
+        let fallback: ResponseEnvelope<serde_json::Value> = ResponseEnvelope {
+            ok: false,
+            graph_revision: None,
+            warnings: None,
+            data: None,
+            error: Some(ErrorBody {
+                code: ErrorCode::Internal,
+                message: "Failed to serialize error".to_string(),
+                details: serde_json::Value::Object(serde_json::Map::new()),
+            }),
+        };
+        serde_json::to_string(&fallback)
+            .unwrap_or_else(|_| {
+                r#"{"ok":false,"error":{"code":"INTERNAL","message":"Failed to serialize error","details":{}}}"#
+                    .to_string()
+            })
     }
 }
 
@@ -96,7 +123,7 @@ mod tests {
             expected: 5,
             provided: 3,
         };
-        let env = ResponseEnvelope::<serde_json::Value>::from_error(&err);
+        let env = ResponseEnvelope::<serde_json::Value>::from_error(&err, None);
         let json = serde_json::to_value(&env).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["error"]["code"], "STALE_REVISION");
@@ -119,7 +146,7 @@ mod tests {
     fn failure_envelope_no_data_field_when_null() {
         // Null fields should still serialize since we want a consistent shape
         let err = AppError::CycleDetected;
-        let env = ResponseEnvelope::<serde_json::Value>::from_error(&err);
+        let env = ResponseEnvelope::<serde_json::Value>::from_error(&err, None);
         let json = serde_json::to_string(&env).unwrap();
         // Verify the structure is present
         assert!(json.contains("\"ok\":false"));
@@ -132,7 +159,7 @@ mod tests {
             action: "complete".to_string(),
             current_status: "PENDING".to_string(),
         };
-        let env = ResponseEnvelope::<serde_json::Value>::from_error(&err);
+        let env = ResponseEnvelope::<serde_json::Value>::from_error(&err, None);
         let error_body = env.error.unwrap();
         assert_eq!(error_body.code, ErrorCode::InvalidTransition);
         assert!(error_body.message.contains("complete"));

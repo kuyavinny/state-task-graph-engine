@@ -43,6 +43,9 @@ pub fn init_graph(project_dir: &Path) -> Result<(), AppError> {
 ///
 /// 1. Write to `.agent/task_graph.yaml.tmp`
 /// 2. Rename to `.agent/task_graph.yaml`
+///
+/// If the rename fails, the orphaned temp file is cleaned up automatically
+/// via a Drop guard.
 pub fn write_graph(project_dir: &Path, graph: &Graph) -> Result<(), AppError> {
     let agent_dir = project_dir.join(AGENT_DIR);
     let target_path = agent_dir.join(GRAPH_FILE);
@@ -58,10 +61,31 @@ pub fn write_graph(project_dir: &Path, graph: &Graph) -> Result<(), AppError> {
     // Write to temp file
     std::fs::write(&tmp_path, yaml_content)?;
 
+    // Guard cleans up the temp file on drop if the rename hasn't committed
+    let mut guard = TmpFileGuard {
+        path: &tmp_path,
+        committed: false,
+    };
+
     // Atomic rename
     std::fs::rename(&tmp_path, &target_path)?;
+    guard.committed = true;
 
     Ok(())
+}
+
+/// Guard that cleans up the temp file on drop if the rename hasn't committed.
+struct TmpFileGuard<'a> {
+    path: &'a Path,
+    committed: bool,
+}
+
+impl<'a> Drop for TmpFileGuard<'a> {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(self.path);
+        }
+    }
 }
 
 /// Read the graph state from disk.

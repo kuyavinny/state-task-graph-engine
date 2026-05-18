@@ -165,6 +165,9 @@ pub enum ErrorCode {
     EventLogDesync,
     AtomicWriteFailed,
     NotImplemented,
+    IoError,
+    SerializationError,
+    Internal,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -184,6 +187,9 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::EventLogDesync => write!(f, "EVENT_LOG_DESYNC"),
             ErrorCode::AtomicWriteFailed => write!(f, "ATOMIC_WRITE_FAILED"),
             ErrorCode::NotImplemented => write!(f, "NOT_IMPLEMENTED"),
+            ErrorCode::IoError => write!(f, "IO_ERROR"),
+            ErrorCode::SerializationError => write!(f, "SERIALIZATION_ERROR"),
+            ErrorCode::Internal => write!(f, "INTERNAL"),
         }
     }
 }
