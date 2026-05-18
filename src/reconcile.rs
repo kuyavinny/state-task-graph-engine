@@ -427,6 +427,39 @@ pub fn claim(
         });
     }
     let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+
+    // Find node position for dependency check (no mutable borrow yet)
+    let node_idx = graph
+        .nodes
+        .iter()
+        .position(|n| n.id == node_id)
+        .ok_or_else(|| AppError::TaskNotFound {
+            id: node_id.to_string(),
+        })?;
+
+    // Dependency-check early-exit before acquiring mutable borrow
+    if graph.nodes[node_idx].status == crate::model::Status::Pending {
+        let deps = graph.nodes[node_idx].dependencies.clone();
+        let unresolved: Vec<String> = deps
+            .into_iter()
+            .filter(|dep| {
+                !graph.nodes.iter().any(|n| {
+                    n.id == *dep
+                        && matches!(
+                            n.status,
+                            crate::model::Status::Completed | crate::model::Status::Skipped
+                        )
+                })
+            })
+            .collect();
+        if !unresolved.is_empty() {
+            return Err(AppError::InvalidTransition {
+                action: "claim".to_string(),
+                current_status: format!("PENDING (waiting for dependencies: {:?})", unresolved),
+            });
+        }
+    }
+
     let node = find_node_mut(&mut graph, node_id)?;
 
     if node.status != crate::model::Status::Ready {
@@ -591,17 +624,19 @@ fn apply_simple_transition(
     let node = find_node_mut(&mut graph, node_id)?;
     let old_status = node.status;
 
+    // Lease ownership check first — if the actor's lease expired during preflight
+    // reconciliation, this gives LeaseNotOwned instead of InvalidTransition,
+    // which is more actionable.
+    if check_lease && node.lease.claimed_by.as_deref() != Some(actor) {
+        return Err(AppError::LeaseNotOwned);
+    }
+
     // Validate from-status
     if !valid_from_statuses.contains(&old_status) {
         return Err(AppError::InvalidTransition {
             action: format!("{:?}", action),
             current_status: old_status.to_string(),
         });
-    }
-
-    // Lease ownership check
-    if check_lease && node.lease.claimed_by.as_deref() != Some(actor) {
-        return Err(AppError::LeaseNotOwned);
     }
 
     let now_rfc3339 = chrono::Utc::now().to_rfc3339();
@@ -1822,5 +1857,70 @@ mod tests {
             result.unwrap_err(),
             AppError::InvalidArgument { .. }
         ));
+    }
+
+    #[test]
+    fn complete_returns_lease_not_owned_when_lease_expired_during_preflight() {
+        // Regression: I3 fix swapped lease-before-status check.
+        // When preflight reconciliation expires a lease (IN_PROGRESS→READY),
+        // complete() should return LeaseNotOwned, not InvalidTransition.
+        let tmp = tempfile::tempdir().unwrap();
+        io::init_graph(tmp.path()).unwrap();
+
+        let mut a = valid_node("a");
+        a.status = Status::InProgress;
+        a.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2020-01-01T00:00:00Z".to_string()), // already expired
+        };
+
+        let mut graph = io::read_graph(tmp.path()).unwrap();
+        graph.nodes.push(a);
+        io::write_graph(tmp.path(), &graph).unwrap();
+
+        // Preflight reconciliation will expire the lease, reverting to READY.
+        // Claim attempts increment but max_attempts is 3 so won't fail yet.
+        let result = complete(tmp.path(), "a", "worker-1", 1, "Done".to_string());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::LeaseNotOwned),
+            "Expected LeaseNotOwned when lease expired during preflight, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn claim_pending_with_unresolved_deps_shows_dependency_info() {
+        // Regression: I5 fix enriches claim error with dependency info.
+        let tmp = tempfile::tempdir().unwrap();
+        io::init_graph(tmp.path()).unwrap();
+
+        let mut a = valid_node("a");
+        a.status = Status::Pending;
+        a.dependencies = vec!["b".to_string()];
+        let mut b = valid_node("b");
+        b.status = Status::Pending; // not completed/skipped
+        b.dependencies = vec![];
+
+        let mut graph = io::read_graph(tmp.path()).unwrap();
+        graph.nodes.push(a);
+        graph.nodes.push(b);
+        io::write_graph(tmp.path(), &graph).unwrap();
+
+        let result = claim(tmp.path(), "a", "worker-1", 300);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            AppError::InvalidTransition { current_status, .. } => {
+                assert!(
+                    current_status.contains("b"),
+                    "Expected error to mention dependency 'b', got: {}",
+                    current_status
+                );
+            }
+            other => panic!("Expected InvalidTransition, got {:?}", other),
+        }
     }
 }

@@ -639,3 +639,415 @@ fn append_nodes_desync_rejected() {
         "EVENT_LOG_DESYNC"
     );
 }
+
+#[test]
+fn next_is_deterministic_across_multiple_runs() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    // Three READY tasks with same priority — should pick by created_at then id
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "task-b"
+    parent_id: null
+    title: "B"
+    description: "Second task"
+    priority: 1
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:01Z"
+    updated_at: "2026-05-17T00:00:01Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "task-a"
+    parent_id: null
+    title: "A"
+    description: "First task"
+    priority: 1
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "task-c"
+    parent_id: null
+    title: "C"
+    description: "Third task"
+    priority: 1
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:01Z"
+    updated_at: "2026-05-17T00:00:01Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    // Run next 5 times — should return the same task every time
+    let mut results = Vec::new();
+    for _ in 0..5 {
+        let output = stg()
+            .arg("next")
+            .current_dir(tmp.path())
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        let next_id = envelope["data"]["id"].as_str().unwrap();
+        results.push(next_id.to_string());
+    }
+    assert_eq!(results, vec!["task-a"; 5]);
+}
+
+#[test]
+fn next_skips_non_ready_tasks() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "task-a"
+    parent_id: null
+    title: "A"
+    description: "Ready"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "task-b"
+    parent_id: null
+    title: "B"
+    description: "In progress"
+    priority: 10
+    status: "IN_PROGRESS"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: "worker-1", claimed_at: "2026-05-17T00:00:00Z", expires_at: "2099-12-31T23:59:59Z" }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    let output = stg()
+        .arg("next")
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let next_id = envelope["data"]["id"].as_str().unwrap();
+    assert_eq!(next_id, "task-a");
+}
+
+#[test]
+fn cli_claim_and_complete_happy_path() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "task-a"
+    parent_id: null
+    title: "A"
+    description: "Test task"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    // Claim the task
+    let claim_out = stg()
+        .args(["claim", "task-a", "worker-1", "--ttl-seconds", "300"])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let claim_env: serde_json::Value = serde_json::from_slice(&claim_out).unwrap();
+    assert_eq!(claim_env["ok"], true);
+    assert_eq!(claim_env["data"]["status"], "IN_PROGRESS");
+    let rev = claim_env["graph_revision"].as_u64().unwrap();
+
+    // Complete the task
+    let comp_out = stg()
+        .args([
+            "complete",
+            "task-a",
+            "worker-1",
+            "--revision",
+            &rev.to_string(),
+            "--result-summary",
+            "Done",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let comp_env: serde_json::Value = serde_json::from_slice(&comp_out).unwrap();
+    assert_eq!(comp_env["ok"], true);
+    assert_eq!(comp_env["data"]["status"], "COMPLETED");
+
+    // Status should show 1 COMPLETED
+    let status_out = stg()
+        .arg("status")
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let status_env: serde_json::Value = serde_json::from_slice(&status_out).unwrap();
+    assert_eq!(status_env["data"]["status"]["COMPLETED"], 1);
+}
+
+#[test]
+fn cli_non_owner_complete_rejected() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "task-a"
+    parent_id: null
+    title: "A"
+    description: "Test task"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    // Claim by worker-1
+    let claim_out = stg()
+        .args(["claim", "task-a", "worker-1", "--ttl-seconds", "300"])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let claim_env: serde_json::Value = serde_json::from_slice(&claim_out).unwrap();
+    let rev = claim_env["graph_revision"].as_u64().unwrap();
+
+    // Try to complete by worker-2 (non-owner)
+    stg()
+        .args([
+            "complete",
+            "task-a",
+            "worker-2",
+            "--revision",
+            &rev.to_string(),
+            "--result-summary",
+            "Stolen",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("LEASE_NOT_OWNED"));
+}
+
+#[test]
+fn cli_skip_with_reason_succeeds() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "task-a"
+    parent_id: null
+    title: "A"
+    description: "Test task"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    // Skip directly from READY
+    let out = stg()
+        .args([
+            "skip",
+            "task-a",
+            "worker-1",
+            "--revision",
+            "0",
+            "--skip-reason",
+            "Not needed",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let env: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["status"], "SKIPPED");
+}
+
+#[test]
+fn cli_claim_pending_shows_dependency_info() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "task-a"
+    parent_id: null
+    title: "Dep task"
+    description: "Has dep"
+    priority: 5
+    status: "PENDING"
+    dependencies: ["task-b"]
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "task-b"
+    parent_id: null
+    title: "Unmet dep"
+    description: "Not done yet"
+    priority: 1
+    status: "PENDING"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    // Claim should fail with dependency info in error message
+    stg()
+        .args(["claim", "task-a", "worker-1", "--ttl-seconds", "300"])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("task-b"));
+}
