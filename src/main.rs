@@ -12,7 +12,7 @@ fn main() {
     let cli = cli::Cli::parse();
     let result = cli.run();
     if let Err(e) = result {
-        let envelope = response::ResponseEnvelope::<()>::from_error(&e, None);
+        let envelope = response::ResponseEnvelope::<serde_json::Value>::from_error(&e, None);
         let json = serde_json::to_string(&envelope)
             .unwrap_or_else(|_| response::ResponseEnvelope::internal_fallback_json());
         println!("{}", json);

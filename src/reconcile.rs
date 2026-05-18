@@ -72,11 +72,10 @@ pub fn load_validate_reconcile(project_dir: &Path) -> Result<ReconciliationResul
         // Update timestamps and revision
         graph.graph_revision = new_revision;
 
-        // Write graph atomically
-        io::write_graph(project_dir, &graph)?;
-
-        // Append all events in a single batch
+        // Write events first, then graph. If graph write fails, desync check
+        // will catch the mismatch on next reconcile.
         io::append_events_batch(project_dir, &events)?;
+        io::write_graph(project_dir, &graph)?;
     }
 
     Ok(ReconciliationResult {
@@ -315,6 +314,7 @@ pub fn append_nodes(
         if node.updated_at.is_empty() {
             node.updated_at = now_rfc3339.clone();
         }
+        // Normalize lease: if unclaimed, ensure all lease fields are None
         if node.lease.claimed_by.is_none() {
             node.lease = crate::model::Lease::empty();
         }
@@ -326,8 +326,8 @@ pub fn append_nodes(
             None,
             Some(node.status),
             None,
-            // Use tentative revision; will be finalized at persist
-            // Index in events array will be resolved at persist time
+            // Tentative revision: indexed from 1 relative to graph_revision.
+            // Final revision = old_rev + total_event_count is computed at persist time below.
             graph.graph_revision + events.len() as u64 + 1,
         ));
         graph.nodes.push(node);
@@ -347,11 +347,11 @@ pub fn append_nodes(
     reconcile_lazy_leases(&mut graph, &mut events);
     reconcile_pending_to_ready(&mut graph, &mut events);
 
-    // 7. Persist (graph always changed since nodes were added)
+    // 7. Persist (write events first, then graph for crash safety)
     let new_revision = graph.graph_revision + events.len() as u64;
     graph.graph_revision = new_revision;
-    io::write_graph(project_dir, &graph)?;
     io::append_events_batch(project_dir, &events)?;
+    io::write_graph(project_dir, &graph)?;
 
     Ok(ReconciliationResult {
         graph,
@@ -687,6 +687,17 @@ mod tests {
         assert!(!result.events.is_empty());
         // Each new node gets an AppendNodes event
         assert_eq!(result.events.len(), 2);
+    }
+
+    #[test]
+    fn append_nodes_empty_list_returns_ok_with_no_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        io::init_graph(tmp.path()).unwrap();
+
+        let result = append_nodes(tmp.path(), 0, vec![]).unwrap();
+        assert_eq!(result.graph.nodes.len(), 0);
+        assert_eq!(result.graph.graph_revision, 0);
+        assert!(result.events.is_empty());
     }
 
     #[test]

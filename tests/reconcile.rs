@@ -543,3 +543,65 @@ fn append_nodes_creates_cycle_fails() {
         code
     );
 }
+
+#[test]
+fn append_nodes_desync_rejected() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    // Write graph with revision 5 but empty event log -> desync
+    let agent_dir = tmp.path().join(".agent");
+    let graph_path = agent_dir.join("task_graph.yaml");
+    let content = std::fs::read_to_string(&graph_path).unwrap();
+    let modified = content.replace("graph_revision: 0", "graph_revision: 5");
+    std::fs::write(&graph_path, modified).unwrap();
+
+    // Try appending a node
+    let nodes_path = tmp.path().join("desync_nodes.yaml");
+    std::fs::write(
+        &nodes_path,
+        r#"
+- id: "x"
+  parent_id: null
+  title: "X"
+  description: "Should fail"
+  priority: 1
+  status: "READY"
+  dependencies: []
+  created_at: "2026-05-17T00:00:00Z"
+  updated_at: "2026-05-17T00:00:00Z"
+  attempts: 0
+  max_attempts: 3
+  lease:
+    claimed_by: null
+    claimed_at: null
+    expires_at: null
+  result_summary: null
+  failure_reason: null
+  blocked_reason: null
+  skip_reason: null
+  cancel_reason: null
+  evidence: []
+  artifacts: []
+  data: null
+"#,
+    )
+    .unwrap();
+
+    let output = stg()
+        .args(["append-nodes", "--revision", "5", "--file"])
+        .arg(nodes_path)
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], false);
+    assert_eq!(
+        envelope["error"]["code"].as_str().unwrap(),
+        "EVENT_LOG_DESYNC"
+    );
+}
