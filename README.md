@@ -2,39 +2,51 @@
 
 A Rust CLI for managing DAG-based task graphs for LLM agents. Provides strict state-machine enforcement, optimistic concurrency via graph revision, task claiming with lease recovery, and bounded context views to prevent LLM context bloat.
 
-## Installation
+---
 
-```bash
-cargo install --path .
-```
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Installation](docs/installation.md) | Build, install, and verify |
+| [API Reference](docs/api-reference.md) | Every command, its arguments, output, and errors |
+| [Agent Integration Protocol](docs/agent-integration-protocol.md) | **How autonomous agents and LLM runtimes integrate with `stg`** |
+| [Integration Guide](docs/integration-guide.md) | Shell, Python, Node.js, CI/CD, and Git hooks examples |
+| [Error Codes](docs/error-codes.md) | All error codes, triggers, and recovery actions |
+| [Architecture](docs/architecture.md) | Internal design: modules, pipeline, persistence, state machine |
+| [Troubleshooting](docs/troubleshooting.md) | Common issues, diagnosis steps, and fixes |
+
+---
 
 ## Quick Start
 
 ```bash
-# 1. Initialize a new project
+# Install
+cargo install --path .
+
+# Initialize a new project
 stg init
 
-# 2. View graph status
+# Load a task plan
+stg append-nodes --revision 0 --file plan.yaml
+
+# Check progress
 stg status
 
-# 3. Get the next available task
+# Get next task
 stg next
 
-# 4. Claim a task (locks it for a specific worker)
-stg claim TASK001 --actor worker-1 --ttl-seconds 300
+# Claim it
+stg claim TASK-001 --actor my-agent --ttl-seconds 300
 
-# 5. Complete the task
-stg complete TASK001 --actor worker-1 --result-summary "Done"
+# Complete it
+stg complete TASK-001 --actor my-agent --revision 2 --result-summary "Done"
+
+# Get bounded context for an LLM
+stg summarize TASK-001 --max-events 10 --max-completed-summaries 5
 ```
 
-## Architecture
-
-The engine is a CLI binary that maintains two files in `.agent/`:
-
-- `task_graph.yaml` — the source-of-truth graph document
-- `task_events.jsonl` — append-only event log for traceability
-
-Every write is atomic (tempfile + rename) and every mutation is guarded by `graph_revision`.
+---
 
 ## Commands
 
@@ -59,33 +71,18 @@ Every write is atomic (tempfile + rename) and every mutation is guarded by `grap
 | `block` | Mark an active task as blocked | IN_PROGRESS → BLOCKED |
 | `skip` | Intentionally bypass a task | IN_PROGRESS → SKIPPED |
 | `cancel` | Cancel a task | Any → CANCELLED |
-| `reopen` | Reset a terminal state back to PENDING or READY | COMPLETED/FAILED/BLOCKED/SKIPPED/CANCELLED → PENDING/READY |
+| `reopen` | Reset a terminal state back to PENDING or READY | Terminal → PENDING/READY |
 
 ### Graph Management
 
 | Command | Description |
 |---------|-------------|
-| `append-nodes <FILE>` | Add new tasks dynamically from a YAML file (revision-gated) |
-| `summarize <NODE_ID>` | Generate a bounded context payload for an LLM |
+| `append-nodes` | Add new tasks from a YAML file (revision-gated) |
+| `summarize` | Generate a bounded context payload for an LLM |
 
-### Summarize Options
+Full argument details, output formats, and error codes: **[API Reference](docs/api-reference.md)**
 
-```bash
-stg summarize TASK001 \
-  --max-events 10 \
-  --max-completed-summaries 5 \
-  --include-blocked true
-```
-
-The summarize command returns a JSON payload containing:
-- `active_task` — the target task's core fields
-- `parent_chain` — ancestor nodes (root → direct parent)
-- `immediate_dependencies` — nodes the active task depends on
-- `dependent_tasks` — nodes that depend on the active task
-- `blocked_or_failed_related` — sibling nodes in blocked/failed state
-- `recent_events` — filtered to this node, reverse chronological
-- `completed_summaries` — recent completed/skipped nodes with result summaries
-- `operator_notes` — reserved for future operator annotations (`null` in v1)
+---
 
 ## State Machine
 
@@ -106,48 +103,30 @@ PENDING ──► READY ──► IN_PROGRESS ──► COMPLETED
                ◄───── reopen()
 ```
 
-## Graph Schema
+---
 
-### task_graph.yaml
+## For Agents and Runtimes
 
-```yaml
-schema_version: "1.0"
-graph_revision: 42
-nodes:
-  - id: "root"
-    parent_id: null
-    title: "Project Root"
-    description: "Top-level task"
-    priority: 0
-    status: "READY"
-    dependencies: []
-    created_at: "2026-05-17T00:00:00Z"
-    updated_at: "2026-05-17T00:00:00Z"
-    attempts: 0
-    max_attempts: 3
-    lease:
-      claimed_by: "worker-1"
-      claimed_at: "2026-05-17T01:00:00Z"
-      expires_at: "2026-05-17T01:05:00Z"
-    result_summary: null
-    failure_reason: null
-    blocked_reason: null
-    skip_reason: null
-    cancel_reason: null
-    evidence: []
-    artifacts: []
-    data: null
-```
+If you are building an autonomous agent, LLM-powered runtime, or coding assistant, start with the **[Agent Integration Protocol](docs/agent-integration-protocol.md)**. It specifies:
 
-### task_events.jsonl
+- The core protocol rules (parse envelope, read-before-write, handle stale revisions)
+- The agent task loop (observe → claim → act → report)
+- Multi-agent coordination via leases
+- How to use `summarize` for bounded LLM context
+- Error recovery protocols for every error code
+- Framework-agnostic integration patterns (subprocess, CI/CD, agent harness)
 
-```json
-{"event_id":"evt-1","timestamp":"2026-05-17T00:00:00Z","graph_revision_before":0,"graph_revision_after":1,"node_id":"root","actor":"system","action":"init","from_status":null,"to_status":null,"reason":"Graph initialized","metadata":null}
-```
+---
+
+## For Human Developers
+
+If you are a developer integrating `stg` into scripts, CI/CD, or tooling, see the **[Integration Guide](docs/integration-guide.md)** for Bash, Python, Node.js, and GitHub Actions examples.
+
+---
 
 ## Response Envelope
 
-Every command returns a JSON envelope:
+Every command returns JSON:
 
 ```json
 {
@@ -159,38 +138,26 @@ Every command returns a JSON envelope:
 }
 ```
 
-On failure:
+On failure: `"ok": false` with structured `error.code`, `error.message`, and `error.details`.
 
-```json
-{
-  "ok": false,
-  "graph_revision": null,
-  "warnings": null,
-  "data": null,
-  "error": {
-    "code": "TASK_NOT_FOUND",
-    "message": "Task TASK999 does not exist",
-    "details": {}
-  }
-}
-```
+Full error code reference: **[Error Codes](docs/error-codes.md)**
+
+---
 
 ## Development
 
 ```bash
 cargo build
-cargo test
+cargo test          # 120 tests
 cargo clippy -- -D warnings
 cargo fmt -- --check
 ```
 
 ## Architecture Docs
 
-See `.rpiv/artifacts/` for:
-- `research/` — PRD
-- `designs/` — Technical spec
-- `plans/` — Implementation plan
-- `reviews/` — Post-merge code reviews
+- **[Architecture](docs/architecture.md)** — Module layout, pipeline, persistence, state machine internals
+- **[Troubleshooting](docs/troubleshooting.md)** — Common issues and fixes
+- `.rpiv/artifacts/` — PRD, technical spec, implementation plan, code reviews
 
 ## License
 
