@@ -545,6 +545,40 @@ fn append_nodes_creates_cycle_fails() {
 }
 
 #[test]
+fn append_nodes_file_not_found() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let output = stg()
+        .args([
+            "append-nodes",
+            "--revision",
+            "0",
+            "--file",
+            "nonexistent.yaml",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], false);
+    assert_eq!(
+        envelope["error"]["code"].as_str().unwrap(),
+        "FILE_NOT_FOUND"
+    );
+    assert!(
+        envelope["error"]["details"]["path"]
+            .as_str()
+            .unwrap()
+            .contains("nonexistent.yaml")
+    );
+}
+
+#[test]
 fn append_nodes_desync_rejected() {
     let tmp = assert_fs::TempDir::new().unwrap();
     init_project(&tmp);

@@ -314,8 +314,12 @@ pub fn append_nodes(
         if node.updated_at.is_empty() {
             node.updated_at = now_rfc3339.clone();
         }
-        // Normalize lease: if unclaimed, ensure all lease fields are None
-        if node.lease.claimed_by.is_none() {
+        // Normalize lease: if any lease field is Some, keep them;
+        // if all three are None, set empty lease
+        if node.lease.claimed_by.is_none()
+            && node.lease.claimed_at.is_none()
+            && node.lease.expires_at.is_none()
+        {
             node.lease = crate::model::Lease::empty();
         }
         // Emit AppendNodes event
