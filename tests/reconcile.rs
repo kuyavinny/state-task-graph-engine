@@ -1525,3 +1525,149 @@ nodes:
     assert!(warnings[0].as_str().unwrap().contains("EVENT_LOG_DESYNC"));
     assert_eq!(envelope["data"]["active_task"]["id"], "a");
 }
+
+#[test]
+fn full_lifecycle_init_append_claim_complete_summarize() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+
+    // 1. init
+    stg().arg("init").current_dir(tmp.path()).assert().success();
+
+    assert!(tmp.path().join(".agent").join("task_graph.yaml").exists());
+    assert!(tmp.path().join(".agent").join("task_events.jsonl").exists());
+
+    // 2. append-nodes
+    let nodes_file = tmp.path().join("nodes.yaml");
+    let nodes_yaml = r#"- id: "a"
+  parent_id: null
+  title: "Task A"
+  description: "First task"
+  priority: 5
+  status: "PENDING"
+  dependencies: []
+  created_at: "2026-05-17T00:00:00Z"
+  updated_at: "2026-05-17T00:00:00Z"
+  attempts: 0
+  max_attempts: 3
+  lease: { claimed_by: null, claimed_at: null, expires_at: null }
+  result_summary: null
+  failure_reason: null
+  blocked_reason: null
+  skip_reason: null
+  cancel_reason: null
+  evidence: []
+  artifacts: []
+  data: null
+"#;
+    std::fs::write(&nodes_file, nodes_yaml).unwrap();
+
+    // Read current revision for append-nodes
+    let graph_str =
+        std::fs::read_to_string(tmp.path().join(".agent").join("task_graph.yaml")).unwrap();
+    let revision = graph_str
+        .lines()
+        .find(|l| l.trim().starts_with("graph_revision:"))
+        .and_then(|l| l.split(':').nth(1))
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap();
+
+    stg()
+        .args([
+            "append-nodes",
+            "--revision",
+            &revision.to_string(),
+            "--file",
+            nodes_file.to_str().unwrap(),
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // 3. next
+    let output = stg()
+        .arg("next")
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["data"]["id"], "a");
+    assert_eq!(envelope["data"]["status"], "READY");
+
+    // 4. claim
+    stg()
+        .args(["claim", "a", "worker-1", "--ttl-seconds", "300"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // Read current revision for complete
+    let graph_str =
+        std::fs::read_to_string(tmp.path().join(".agent").join("task_graph.yaml")).unwrap();
+    let revision = graph_str
+        .lines()
+        .find(|l| l.trim().starts_with("graph_revision:"))
+        .and_then(|l| l.split(':').nth(1))
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap();
+
+    // 5. complete
+    stg()
+        .args([
+            "complete",
+            "a",
+            "worker-1",
+            "--revision",
+            &revision.to_string(),
+            "--result-summary",
+            "Task A done",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // 6. next (should return empty since no remaining tasks)
+    let output = stg()
+        .arg("next")
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], true);
+    assert!(envelope["data"].is_null() || envelope["data"]["id"].is_null());
+
+    // 7. summarize
+    let output = stg()
+        .args(["summarize", "a"])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], true);
+    let active_task = &envelope["data"]["active_task"];
+    assert_eq!(active_task["id"], "a");
+    // active_task payload does not include status per bounded-context spec
+    assert!(
+        envelope["data"]["completed_summaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["result_summary"] == "Task A done")
+    );
+    assert_eq!(
+        envelope["data"]["completed_summaries"][0]["result_summary"],
+        "Task A done"
+    );
+}
