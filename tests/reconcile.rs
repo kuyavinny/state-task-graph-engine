@@ -316,10 +316,10 @@ fn append_nodes_valid_succeeds() {
     let tmp = assert_fs::TempDir::new().unwrap();
     init_project(&tmp);
 
-    // Pre-populate one node so graph_revision > 0
+    // Pre-populate one node using status (via init then write), keeping rev 0
     let existing_yaml = r#"
 schema_version: "1.0"
-graph_revision: 1
+graph_revision: 0
 nodes:
   - id: "existing"
     parent_id: null
@@ -400,7 +400,7 @@ nodes:
     std::fs::write(&nodes_path, nodes_yaml).unwrap();
 
     let output = stg()
-        .args(["append-nodes", "--revision", "1", "--file"])
+        .args(["append-nodes", "--revision", "0", "--file"])
         .arg(nodes_path)
         .current_dir(tmp.path())
         .assert()
@@ -411,7 +411,7 @@ nodes:
 
     let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(envelope["ok"], true);
-    assert!(envelope["data"]["revision"].as_u64().unwrap() > 1);
+    assert!(envelope["data"]["revision"].as_u64().unwrap() > 0);
     assert_eq!(envelope["data"]["node_count"], 3); // existing + 2 new
     assert!(envelope["data"]["events_generated"].as_u64().unwrap() >= 2); // at least append events, possibly more
 }
@@ -470,40 +470,32 @@ fn append_nodes_creates_cycle_fails() {
     let tmp = assert_fs::TempDir::new().unwrap();
     init_project(&tmp);
 
-    // Existing node "a" depends on "b" (not yet present)
-    let existing_yaml = r#"
-schema_version: "1.0"
-graph_revision: 1
-nodes:
-  - id: "a"
-    parent_id: null
-    title: "A"
-    description: "Node A"
-    priority: 1
-    status: "READY"
-    dependencies: ["b"]
-    created_at: "2026-05-17T00:00:00Z"
-    updated_at: "2026-05-17T00:00:00Z"
-    attempts: 0
-    max_attempts: 3
-    lease:
-      claimed_by: null
-      claimed_at: null
-      expires_at: null
-    result_summary: null
-    failure_reason: null
-    blocked_reason: null
-    skip_reason: null
-    cancel_reason: null
-    evidence: []
-    artifacts: []
-    data: null
-"#;
-    write_graph(&tmp, existing_yaml);
-
-    // Append "b" which depends on "a" → creates cycle a→b→a
+    // Append two nodes that form a cycle: a -> b -> a
     let nodes_path = tmp.path().join("nodes.yaml");
     let nodes_yaml = r#"
+- id: "a"
+  parent_id: null
+  title: "A"
+  description: "Node A"
+  priority: 1
+  status: "READY"
+  dependencies: ["b"]
+  created_at: "2026-05-17T00:00:00Z"
+  updated_at: "2026-05-17T00:00:00Z"
+  attempts: 0
+  max_attempts: 3
+  lease:
+    claimed_by: null
+    claimed_at: null
+    expires_at: null
+  result_summary: null
+  failure_reason: null
+  blocked_reason: null
+  skip_reason: null
+  cancel_reason: null
+  evidence: []
+  artifacts: []
+  data: null
 - id: "b"
   parent_id: null
   title: "B"
@@ -531,7 +523,7 @@ nodes:
     std::fs::write(&nodes_path, nodes_yaml).unwrap();
 
     let output = stg()
-        .args(["append-nodes", "--revision", "1", "--file"])
+        .args(["append-nodes", "--revision", "0", "--file"])
         .arg(nodes_path)
         .current_dir(tmp.path())
         .assert()

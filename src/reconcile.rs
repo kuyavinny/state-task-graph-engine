@@ -279,10 +279,14 @@ pub fn append_nodes(
     use crate::model::Node;
     use std::collections::HashSet;
 
-    // 1. Load graph
-    let mut graph = io::read_graph(project_dir)?;
+    // 1. Preflight: load, validate, reconcile, catch desync
+    let preflight = load_validate_reconcile(project_dir)?;
+    if !preflight.warnings.is_empty() {
+        return Err(AppError::EventLogDesync);
+    }
+    let mut graph = preflight.graph;
 
-    // 2. Stale revision check
+    // 2. Stale revision check (against reconciled revision)
     if graph.graph_revision != revision {
         return Err(AppError::StaleRevision {
             expected: graph.graph_revision,
@@ -290,11 +294,11 @@ pub fn append_nodes(
         });
     }
 
-    // 3. Check for duplicate IDs between new and existing nodes
-    let existing_ids: HashSet<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
+    // 3. Check for duplicate IDs: existing <-> new AND new <-> new
+    let mut seen: HashSet<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
     let mut new_nodes_clean: Vec<Node> = Vec::with_capacity(new_nodes.len());
     for node in new_nodes {
-        if existing_ids.contains(node.id.as_str()) {
+        if !seen.insert(node.id.clone()) {
             return Err(AppError::DuplicateNodeId { id: node.id });
         }
         new_nodes_clean.push(node);
@@ -674,21 +678,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         io::init_graph(tmp.path()).unwrap();
 
-        // Start with one node via load_validate_reconcile
-        let mut graph = io::read_graph(tmp.path()).unwrap();
-        let a = valid_node("existing");
-        graph.nodes.push(a);
-        io::write_graph(tmp.path(), &graph).unwrap();
-
-        graph.graph_revision = 1;
-        io::write_graph(tmp.path(), &graph).unwrap();
-
+        // Graph starts at rev 0 with no nodes (empty event log matches)
         let new_nodes = vec![valid_node("new-1"), valid_node("new-2")];
-        let result = append_nodes(tmp.path(), 1, new_nodes).unwrap();
+        let result = append_nodes(tmp.path(), 0, new_nodes).unwrap();
 
-        assert_eq!(result.graph.nodes.len(), 3);
-        assert_eq!(result.graph.graph_revision, 1 + result.events.len() as u64);
+        assert_eq!(result.graph.nodes.len(), 2);
+        assert!(result.graph.graph_revision > 0);
         assert!(!result.events.is_empty());
+        // Each new node gets an AppendNodes event
+        assert_eq!(result.events.len(), 2);
     }
 
     #[test]
@@ -712,13 +710,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         io::init_graph(tmp.path()).unwrap();
 
+        // Write one node at rev 0
         let mut graph = io::read_graph(tmp.path()).unwrap();
         graph.nodes.push(valid_node("existing"));
-        graph.graph_revision = 1;
         io::write_graph(tmp.path(), &graph).unwrap();
 
+        // Try to append another node with the same ID
         let new_nodes = vec![valid_node("existing")];
-        let result = append_nodes(tmp.path(), 1, new_nodes);
+        let result = append_nodes(tmp.path(), 0, new_nodes);
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::DuplicateNodeId { id } => assert_eq!(id, "existing"),
@@ -731,18 +730,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         io::init_graph(tmp.path()).unwrap();
 
-        // Existing node "a" depends on "b" — but "b" doesn't exist yet
-        let mut graph = io::read_graph(tmp.path()).unwrap();
+        // Append two nodes that form a cycle: a -> b -> a
         let mut a = valid_node("a");
         a.dependencies = vec!["b".to_string()];
-        graph.nodes.push(a);
-        graph.graph_revision = 1;
-        io::write_graph(tmp.path(), &graph).unwrap();
-
-        // Append "b" depending on "a" → creates cycle a→b→a
         let mut b = valid_node("b");
         b.dependencies = vec!["a".to_string()];
-        let result = append_nodes(tmp.path(), 1, vec![b]);
+        let result = append_nodes(tmp.path(), 0, vec![a, b]);
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::GraphValidationFailed { count, .. } => assert!(count > 0),
@@ -755,23 +748,97 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         io::init_graph(tmp.path()).unwrap();
 
-        // Existing node "a" is COMPLETED
+        // Write COMPLETED node "a" at rev 0
         let mut graph = io::read_graph(tmp.path()).unwrap();
         let mut a = valid_node("a");
         a.status = Status::Completed;
         a.result_summary = Some("done".to_string());
         graph.nodes.push(a);
-        graph.graph_revision = 1;
         io::write_graph(tmp.path(), &graph).unwrap();
 
-        // Append node "b" with PENDING status and dependency on "a"
-        // After append + reconciliation, "b" should be promoted to READY
+        // Append PENDING node "b" depending on "a" — should promote to READY
         let mut b = valid_node("b");
         b.status = Status::Pending;
         b.dependencies = vec!["a".to_string()];
-        let result = append_nodes(tmp.path(), 1, vec![b]).unwrap();
+        let result = append_nodes(tmp.path(), 0, vec![b]).unwrap();
 
         let b_node = result.graph.nodes.iter().find(|n| n.id == "b").unwrap();
         assert_eq!(b_node.status, Status::Ready);
+        // 1 append event + 1 dep resolution = 2 events
+        assert_eq!(result.events.len(), 2);
+    }
+
+    #[test]
+    fn append_nodes_rejects_duplicate_ids_in_input() {
+        let tmp = tempfile::tempdir().unwrap();
+        io::init_graph(tmp.path()).unwrap();
+
+        // Two nodes in the same input share an ID
+        let mut dup = valid_node("a");
+        dup.title = "First A".to_string();
+        let mut dup2 = valid_node("a");
+        dup2.title = "Second A".to_string();
+        let new_nodes = vec![dup, dup2];
+        let result = append_nodes(tmp.path(), 0, new_nodes);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::DuplicateNodeId { id } => assert_eq!(id, "a"),
+            other => panic!("Expected DuplicateNodeId, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn append_nodes_refuses_desynced_event_log() {
+        let tmp = tempfile::tempdir().unwrap();
+        io::init_graph(tmp.path()).unwrap();
+
+        // Write graph with revision 5 but empty event log (max rev = 0) -> desync
+        let mut graph = io::read_graph(tmp.path()).unwrap();
+        graph.graph_revision = 5;
+        io::write_graph(tmp.path(), &graph).unwrap();
+
+        let result = append_nodes(tmp.path(), 5, vec![valid_node("a")]);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::EventLogDesync => {} // OK
+            other => panic!("Expected EventLogDesync, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn append_nodes_preflight_reconciles_then_revision_gates() {
+        let tmp = tempfile::tempdir().unwrap();
+        io::init_graph(tmp.path()).unwrap();
+
+        // Write a graph where reconciliation fires:
+        // IN_PROGRESS node with expired lease, attempts < max → back to READY
+        let mut graph = io::read_graph(tmp.path()).unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.attempts = 1;
+        node.max_attempts = 3;
+        node.lease = crate::model::Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2026-05-17T00:01:00Z".to_string()), // in the past
+        };
+        graph.nodes.push(node);
+        io::write_graph(tmp.path(), &graph).unwrap();
+
+        // Preflight should reconcile (rev becomes > 0 after persist)
+        // Then stale check: request rev 0 vs reconciled rev → STALE_REVISION
+        let result = append_nodes(tmp.path(), 0, vec![valid_node("b")]);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::StaleRevision { expected, provided } => {
+                // expected should be 1 (0 + 1 lease-expiry event)
+                assert_eq!(
+                    expected, 1,
+                    "Expected reconciled revision 1 after lease expiry"
+                );
+                assert_eq!(provided, 0);
+            }
+            other => panic!("Expected StaleRevision, got: {:?}", other),
+        }
     }
 }
