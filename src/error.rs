@@ -21,6 +21,9 @@ pub enum AppError {
     #[error("Cycle detected in dependencies")]
     CycleDetected,
 
+    #[error("Invalid argument: {message}")]
+    InvalidArgument { message: String },
+
     #[error("Invalid state transition: cannot {action} on {current_status}")]
     InvalidTransition {
         action: String,
@@ -77,6 +80,7 @@ impl AppError {
             AppError::UnknownDependency { .. } => ErrorCode::UnknownDependency,
             AppError::CycleDetected => ErrorCode::CycleDetected,
             AppError::InvalidTransition { .. } => ErrorCode::InvalidTransition,
+            AppError::InvalidArgument { .. } => ErrorCode::InvalidArgument,
             AppError::StaleRevision { .. } => ErrorCode::StaleRevision,
             AppError::LeaseNotOwned => ErrorCode::LeaseNotOwned,
             AppError::TaskNotReady { .. } => ErrorCode::TaskNotReady,
@@ -130,6 +134,9 @@ impl AppError {
             AppError::GraphValidationFailed { count, errors } => serde_json::json!({
                 "count": count,
                 "errors": errors,
+            }),
+            AppError::InvalidArgument { message } => serde_json::json!({
+                "message": message,
             }),
             _ => serde_json::Value::Object(serde_json::Map::new()),
         }

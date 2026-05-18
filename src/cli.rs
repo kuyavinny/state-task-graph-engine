@@ -58,6 +58,9 @@ pub enum Commands {
         node_id: String,
         /// Actor completing the task
         actor: String,
+        /// Current graph revision for optimistic concurrency
+        #[arg(long)]
+        revision: u64,
         /// Brief outcome description
         #[arg(long)]
         result_summary: String,
@@ -68,6 +71,9 @@ pub enum Commands {
         node_id: String,
         /// Actor reporting failure
         actor: String,
+        /// Current graph revision for optimistic concurrency
+        #[arg(long)]
+        revision: u64,
         /// Failure reason
         #[arg(long)]
         failure_reason: String,
@@ -78,6 +84,9 @@ pub enum Commands {
         node_id: String,
         /// Actor blocking the task
         actor: String,
+        /// Current graph revision for optimistic concurrency
+        #[arg(long)]
+        revision: u64,
         /// Reason for blocking
         #[arg(long)]
         blocked_reason: String,
@@ -88,6 +97,9 @@ pub enum Commands {
         node_id: String,
         /// Actor skipping the task
         actor: String,
+        /// Current graph revision for optimistic concurrency
+        #[arg(long)]
+        revision: u64,
         /// Reason for skipping
         #[arg(long)]
         skip_reason: String,
@@ -98,6 +110,9 @@ pub enum Commands {
         node_id: String,
         /// Actor cancelling the task
         actor: String,
+        /// Current graph revision for optimistic concurrency
+        #[arg(long)]
+        revision: u64,
         /// Reason for cancellation
         #[arg(long)]
         cancel_reason: String,
@@ -108,6 +123,9 @@ pub enum Commands {
         node_id: String,
         /// Actor reopening the task
         actor: String,
+        /// Current graph revision for optimistic concurrency
+        #[arg(long)]
+        revision: u64,
     },
     /// Add new tasks dynamically from a file
     AppendNodes {
@@ -235,15 +253,158 @@ impl Cli {
                 println!("{}", serde_json::to_string_pretty(&envelope)?);
                 Ok(())
             }
-            Commands::Claim { .. } => Err(AppError::NotImplemented("claim".into())),
-            Commands::Heartbeat { .. } => Err(AppError::NotImplemented("heartbeat".into())),
-            Commands::Release { .. } => Err(AppError::NotImplemented("release".into())),
-            Commands::Complete { .. } => Err(AppError::NotImplemented("complete".into())),
-            Commands::Fail { .. } => Err(AppError::NotImplemented("fail".into())),
-            Commands::Block { .. } => Err(AppError::NotImplemented("block".into())),
-            Commands::Skip { .. } => Err(AppError::NotImplemented("skip".into())),
-            Commands::Cancel { .. } => Err(AppError::NotImplemented("cancel".into())),
-            Commands::Reopen { .. } => Err(AppError::NotImplemented("reopen".into())),
+            Commands::Claim {
+                node_id,
+                actor,
+                ttl_seconds,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::claim(&dir, &node_id, &actor, ttl_seconds)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "IN_PROGRESS",
+                    "actor": actor,
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Heartbeat {
+                node_id,
+                actor,
+                ttl_seconds,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::heartbeat(&dir, &node_id, &actor, ttl_seconds)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "IN_PROGRESS",
+                    "actor": actor,
+                    "lease_expires_at": result.graph.nodes.iter()
+                        .find(|n| n.id == node_id)
+                        .and_then(|n| n.lease.expires_at.as_deref()),
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Release { node_id, actor } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::release(&dir, &node_id, &actor)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "READY",
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Complete {
+                node_id,
+                actor,
+                revision,
+                result_summary,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::complete(&dir, &node_id, &actor, revision, result_summary)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "COMPLETED",
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Fail {
+                node_id,
+                actor,
+                revision,
+                failure_reason,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::fail(&dir, &node_id, &actor, revision, failure_reason)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "FAILED",
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Block {
+                node_id,
+                actor,
+                revision,
+                blocked_reason,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::block(&dir, &node_id, &actor, revision, blocked_reason)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "BLOCKED",
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Skip {
+                node_id,
+                actor,
+                revision,
+                skip_reason,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::skip(&dir, &node_id, &actor, revision, skip_reason)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "SKIPPED",
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Cancel {
+                node_id,
+                actor,
+                revision,
+                cancel_reason,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::cancel(&dir, &node_id, &actor, revision, cancel_reason)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": "CANCELLED",
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
+            Commands::Reopen {
+                node_id,
+                actor,
+                revision,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::reopen(&dir, &node_id, &actor, revision)?;
+                let data = serde_json::json!({
+                    "node_id": node_id,
+                    "status": result.graph.nodes.iter()
+                        .find(|n| n.id == node_id)
+                        .map(|n| n.status.to_string()),
+                });
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
             Commands::AppendNodes { revision, file } => {
                 let dir = std::env::current_dir()?;
 
