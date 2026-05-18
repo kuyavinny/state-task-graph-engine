@@ -45,6 +45,9 @@ pub enum AppError {
     #[error("Event log desync detected")]
     EventLogDesync,
 
+    #[error("File not found: {path}")]
+    FileNotFound { path: String },
+
     #[error("Atomic write failed: {message}")]
     AtomicWriteFailed { message: String },
 
@@ -80,6 +83,7 @@ impl AppError {
             AppError::TaskNotFound { .. } => ErrorCode::TaskNotFound,
             AppError::MaxAttemptsExceeded { .. } => ErrorCode::MaxAttemptsExceeded,
             AppError::EventLogDesync => ErrorCode::EventLogDesync,
+            AppError::FileNotFound { .. } => ErrorCode::FileNotFound,
             AppError::AtomicWriteFailed { .. } => ErrorCode::AtomicWriteFailed,
             AppError::NotImplemented(_) => ErrorCode::NotImplemented,
             AppError::Io(_) => ErrorCode::IoError,
@@ -116,6 +120,9 @@ impl AppError {
             }),
             AppError::MaxAttemptsExceeded { id } => serde_json::json!({
                 "id": id,
+            }),
+            AppError::FileNotFound { path } => serde_json::json!({
+                "path": path,
             }),
             AppError::AtomicWriteFailed { message } => serde_json::json!({
                 "message": message,

@@ -244,7 +244,32 @@ impl Cli {
             Commands::Skip { .. } => Err(AppError::NotImplemented("skip".into())),
             Commands::Cancel { .. } => Err(AppError::NotImplemented("cancel".into())),
             Commands::Reopen { .. } => Err(AppError::NotImplemented("reopen".into())),
-            Commands::AppendNodes { .. } => Err(AppError::NotImplemented("append-nodes".into())),
+            Commands::AppendNodes { revision, file } => {
+                let dir = std::env::current_dir()?;
+
+                // Read nodes from file
+                let content = match std::fs::read_to_string(&file) {
+                    Ok(c) => c,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(AppError::FileNotFound { path: file.clone() });
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                let nodes: Vec<crate::model::Node> = serde_yaml::from_str(&content)?;
+
+                let result = reconcile::append_nodes(&dir, revision, nodes)?;
+
+                let data = serde_json::json!({
+                    "revision": result.graph.graph_revision,
+                    "node_count": result.graph.nodes.len(),
+                    "events_generated": result.events.len(),
+                });
+
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok(result.graph.graph_revision, data);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
             Commands::Summarize { .. } => Err(AppError::NotImplemented("summarize".into())),
         }
     }
