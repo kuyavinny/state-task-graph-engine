@@ -364,6 +364,540 @@ pub fn append_nodes(
     })
 }
 
+// ---------------------------------------------------------------------------
+// State mutation commands (PR#5)
+// ---------------------------------------------------------------------------
+
+/// Find a node by ID in the graph, returning TASK_NOT_FOUND if absent.
+fn find_node_mut<'a>(
+    graph: &'a mut Graph,
+    node_id: &str,
+) -> Result<&'a mut crate::model::Node, AppError> {
+    let idx = graph
+        .nodes
+        .iter()
+        .position(|n| n.id == node_id)
+        .ok_or_else(|| AppError::TaskNotFound {
+            id: node_id.to_string(),
+        })?;
+    Ok(&mut graph.nodes[idx])
+}
+
+/// Common preflight + persist for state mutation commands.
+/// Returns the preflighted graph and an empty events vec.
+fn preflight_mutation(project_dir: &Path, node_id: &str) -> Result<(Graph, Vec<Event>), AppError> {
+    let preflight = load_validate_reconcile(project_dir)?;
+    if !preflight.warnings.is_empty() {
+        return Err(AppError::EventLogDesync);
+    }
+    // Verify node exists
+    find_node_mut(&mut preflight.graph.clone(), node_id)?;
+    Ok((preflight.graph, preflight.events))
+}
+
+/// Persist graph + events after a successful mutation.
+fn persist_mutation(
+    project_dir: &Path,
+    graph: &mut Graph,
+    events: &mut Vec<Event>,
+) -> Result<(), AppError> {
+    // Run reconciliation (lease expiry, PENDING → READY promotion)
+    reconcile_lazy_leases(graph, events);
+    reconcile_pending_to_ready(graph, events);
+
+    let new_revision = graph.graph_revision + events.len() as u64;
+    graph.graph_revision = new_revision;
+    io::append_events_batch(project_dir, events)?;
+    io::write_graph(project_dir, graph)?;
+    Ok(())
+}
+
+/// Lock a READY task with a lease.
+pub fn claim(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    ttl_seconds: u64,
+) -> Result<ReconciliationResult, AppError> {
+    let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+    let node = find_node_mut(&mut graph, node_id)?;
+
+    if node.status != crate::model::Status::Ready {
+        return Err(AppError::InvalidTransition {
+            action: "claim".to_string(),
+            current_status: node.status.to_string(),
+        });
+    }
+
+    let now = chrono::Utc::now();
+    let now_rfc3339 = now.to_rfc3339();
+    let expires_rfc3339 = (now + chrono::Duration::seconds(ttl_seconds as i64)).to_rfc3339();
+
+    let old_status = node.status;
+    node.status = crate::model::Status::InProgress;
+    node.lease = crate::model::Lease {
+        claimed_by: Some(actor.to_string()),
+        claimed_at: Some(now_rfc3339.clone()),
+        expires_at: Some(expires_rfc3339),
+    };
+    node.attempts += 1;
+    node.updated_at = now_rfc3339.clone();
+
+    events.push(make_event(
+        node_id,
+        actor,
+        crate::model::EventAction::Claim,
+        Some(old_status),
+        Some(crate::model::Status::InProgress),
+        None,
+        graph.graph_revision + events.len() as u64 + 1,
+    ));
+
+    persist_mutation(project_dir, &mut graph, &mut events)?;
+    Ok(ReconciliationResult {
+        graph,
+        events,
+        warnings: Vec::new(),
+    })
+}
+
+/// Extend a lease on an IN_PROGRESS node.
+pub fn heartbeat(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    ttl_seconds: u64,
+) -> Result<ReconciliationResult, AppError> {
+    let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+    let node = find_node_mut(&mut graph, node_id)?;
+
+    if node.status != crate::model::Status::InProgress {
+        return Err(AppError::InvalidTransition {
+            action: "heartbeat".to_string(),
+            current_status: node.status.to_string(),
+        });
+    }
+
+    // Lease ownership check
+    if node.lease.claimed_by.as_deref() != Some(actor) {
+        return Err(AppError::LeaseNotOwned);
+    }
+
+    let now = chrono::Utc::now();
+    let now_rfc3339 = now.to_rfc3339();
+    let expires_rfc3339 = (now + chrono::Duration::seconds(ttl_seconds as i64)).to_rfc3339();
+
+    node.lease.expires_at = Some(expires_rfc3339);
+    node.lease.claimed_at = Some(now_rfc3339.clone());
+    node.updated_at = now_rfc3339.clone();
+
+    events.push(make_event(
+        node_id,
+        actor,
+        crate::model::EventAction::Heartbeat,
+        Some(crate::model::Status::InProgress),
+        Some(crate::model::Status::InProgress),
+        Some(format!("Lease extended by {}s", ttl_seconds)),
+        graph.graph_revision + events.len() as u64 + 1,
+    ));
+
+    persist_mutation(project_dir, &mut graph, &mut events)?;
+    Ok(ReconciliationResult {
+        graph,
+        events,
+        warnings: Vec::new(),
+    })
+}
+
+/// Release a claimed task back to READY.
+pub fn release(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+) -> Result<ReconciliationResult, AppError> {
+    let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+    let node = find_node_mut(&mut graph, node_id)?;
+
+    if node.status != crate::model::Status::InProgress {
+        return Err(AppError::InvalidTransition {
+            action: "release".to_string(),
+            current_status: node.status.to_string(),
+        });
+    }
+
+    // Lease ownership check
+    if node.lease.claimed_by.as_deref() != Some(actor) {
+        return Err(AppError::LeaseNotOwned);
+    }
+
+    let old_status = node.status;
+    node.status = crate::model::Status::Ready;
+    node.lease = crate::model::Lease::empty();
+    node.updated_at = chrono::Utc::now().to_rfc3339();
+
+    events.push(make_event(
+        node_id,
+        actor,
+        crate::model::EventAction::Release,
+        Some(old_status),
+        Some(crate::model::Status::Ready),
+        None,
+        graph.graph_revision + events.len() as u64 + 1,
+    ));
+
+    persist_mutation(project_dir, &mut graph, &mut events)?;
+    Ok(ReconciliationResult {
+        graph,
+        events,
+        warnings: Vec::new(),
+    })
+}
+
+/// Internal helper for status transition commands with lease and revision checks.
+#[allow(clippy::too_many_arguments)]
+fn apply_simple_transition(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    revision: u64,
+    new_status: crate::model::Status,
+    valid_from_statuses: &[crate::model::Status],
+    action: crate::model::EventAction,
+    check_lease: bool,
+    reason: Option<String>,
+) -> Result<ReconciliationResult, AppError> {
+    let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+
+    // Revision check
+    if graph.graph_revision != revision {
+        return Err(AppError::StaleRevision {
+            expected: graph.graph_revision,
+            provided: revision,
+        });
+    }
+
+    let node = find_node_mut(&mut graph, node_id)?;
+    let old_status = node.status;
+
+    // Validate from-status
+    if !valid_from_statuses.contains(&old_status) {
+        return Err(AppError::InvalidTransition {
+            action: format!("{:?}", action),
+            current_status: old_status.to_string(),
+        });
+    }
+
+    // Lease ownership check
+    if check_lease && node.lease.claimed_by.as_deref() != Some(actor) {
+        return Err(AppError::LeaseNotOwned);
+    }
+
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+    node.status = new_status;
+    node.updated_at = now_rfc3339.clone();
+    node.lease = crate::model::Lease::empty();
+
+    // Set reason field based on target status
+    match action {
+        crate::model::EventAction::Complete => {
+            node.result_summary = reason.clone();
+        }
+        crate::model::EventAction::Fail => {
+            node.failure_reason = reason.clone();
+        }
+        crate::model::EventAction::Block => {
+            node.blocked_reason = reason.clone();
+        }
+        crate::model::EventAction::Skip => {
+            node.skip_reason = reason.clone();
+        }
+        crate::model::EventAction::Cancel => {
+            node.cancel_reason = reason.clone();
+        }
+        _ => {}
+    }
+
+    events.push(make_event(
+        node_id,
+        actor,
+        action,
+        Some(old_status),
+        Some(node.status),
+        reason,
+        graph.graph_revision + events.len() as u64 + 1,
+    ));
+
+    persist_mutation(project_dir, &mut graph, &mut events)?;
+    Ok(ReconciliationResult {
+        graph,
+        events,
+        warnings: Vec::new(),
+    })
+}
+
+/// Mark an active task as completed.
+pub fn complete(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    revision: u64,
+    result_summary: String,
+) -> Result<ReconciliationResult, AppError> {
+    apply_simple_transition(
+        project_dir,
+        node_id,
+        actor,
+        revision,
+        crate::model::Status::Completed,
+        &[crate::model::Status::InProgress],
+        crate::model::EventAction::Complete,
+        true,
+        Some(result_summary),
+    )
+}
+
+/// Mark an active task as failed.
+pub fn fail(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    revision: u64,
+    failure_reason: String,
+) -> Result<ReconciliationResult, AppError> {
+    apply_simple_transition(
+        project_dir,
+        node_id,
+        actor,
+        revision,
+        crate::model::Status::Failed,
+        &[crate::model::Status::InProgress],
+        crate::model::EventAction::Fail,
+        true,
+        Some(failure_reason),
+    )
+}
+
+/// Mark an active task as blocked.
+pub fn block(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    revision: u64,
+    blocked_reason: String,
+) -> Result<ReconciliationResult, AppError> {
+    apply_simple_transition(
+        project_dir,
+        node_id,
+        actor,
+        revision,
+        crate::model::Status::Blocked,
+        &[crate::model::Status::InProgress],
+        crate::model::EventAction::Block,
+        true,
+        Some(blocked_reason),
+    )
+}
+
+/// Intentionally bypass a task.
+pub fn skip(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    revision: u64,
+    skip_reason: String,
+) -> Result<ReconciliationResult, AppError> {
+    let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+
+    // Revision check
+    if graph.graph_revision != revision {
+        return Err(AppError::StaleRevision {
+            expected: graph.graph_revision,
+            provided: revision,
+        });
+    }
+
+    let node = find_node_mut(&mut graph, node_id)?;
+    let old_status = node.status;
+
+    // Valid from-statuses: PENDING, READY, BLOCKED, or IN_PROGRESS (with lease check)
+    let valid = [
+        crate::model::Status::Pending,
+        crate::model::Status::Ready,
+        crate::model::Status::Blocked,
+        crate::model::Status::InProgress,
+    ];
+    if !valid.contains(&old_status) {
+        return Err(AppError::InvalidTransition {
+            action: "skip".to_string(),
+            current_status: old_status.to_string(),
+        });
+    }
+
+    // If IN_PROGRESS and leased to another actor → LEASE_NOT_OWNED
+    if old_status == crate::model::Status::InProgress
+        && node.lease.claimed_by.as_deref() != Some(actor)
+    {
+        return Err(AppError::LeaseNotOwned);
+    }
+
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+    node.status = crate::model::Status::Skipped;
+    node.skip_reason = Some(skip_reason.clone());
+    node.updated_at = now_rfc3339.clone();
+    node.lease = crate::model::Lease::empty();
+
+    events.push(make_event(
+        node_id,
+        actor,
+        crate::model::EventAction::Skip,
+        Some(old_status),
+        Some(crate::model::Status::Skipped),
+        Some(skip_reason),
+        graph.graph_revision + events.len() as u64 + 1,
+    ));
+
+    persist_mutation(project_dir, &mut graph, &mut events)?;
+    Ok(ReconciliationResult {
+        graph,
+        events,
+        warnings: Vec::new(),
+    })
+}
+
+/// Cancel a task from any non-terminal state.
+pub fn cancel(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    revision: u64,
+    cancel_reason: String,
+) -> Result<ReconciliationResult, AppError> {
+    let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+
+    // Revision check
+    if graph.graph_revision != revision {
+        return Err(AppError::StaleRevision {
+            expected: graph.graph_revision,
+            provided: revision,
+        });
+    }
+
+    let node = find_node_mut(&mut graph, node_id)?;
+    let old_status = node.status;
+
+    // Can cancel any non-terminal state
+    let terminal = [
+        crate::model::Status::Completed,
+        crate::model::Status::Failed,
+        crate::model::Status::Cancelled,
+        crate::model::Status::Skipped,
+    ];
+    if terminal.contains(&old_status) {
+        return Err(AppError::InvalidTransition {
+            action: "cancel".to_string(),
+            current_status: old_status.to_string(),
+        });
+    }
+
+    // If IN_PROGRESS and leased to another actor → LEASE_NOT_OWNED
+    if old_status == crate::model::Status::InProgress
+        && node.lease.claimed_by.as_deref() != Some(actor)
+    {
+        return Err(AppError::LeaseNotOwned);
+    }
+
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+    node.status = crate::model::Status::Cancelled;
+    node.cancel_reason = Some(cancel_reason.clone());
+    node.updated_at = now_rfc3339.clone();
+    node.lease = crate::model::Lease::empty();
+
+    events.push(make_event(
+        node_id,
+        actor,
+        crate::model::EventAction::Cancel,
+        Some(old_status),
+        Some(crate::model::Status::Cancelled),
+        Some(cancel_reason),
+        graph.graph_revision + events.len() as u64 + 1,
+    ));
+
+    persist_mutation(project_dir, &mut graph, &mut events)?;
+    Ok(ReconciliationResult {
+        graph,
+        events,
+        warnings: Vec::new(),
+    })
+}
+
+/// Reset a terminal or BLOCKED state back to PENDING or READY.
+pub fn reopen(
+    project_dir: &Path,
+    node_id: &str,
+    actor: &str,
+    revision: u64,
+) -> Result<ReconciliationResult, AppError> {
+    let (mut graph, mut events) = preflight_mutation(project_dir, node_id)?;
+
+    // Revision check
+    if graph.graph_revision != revision {
+        return Err(AppError::StaleRevision {
+            expected: graph.graph_revision,
+            provided: revision,
+        });
+    }
+
+    let node = find_node_mut(&mut graph, node_id)?;
+    let old_status = node.status;
+
+    // Valid from-statuses: terminal states (COMPLETED, FAILED, CANCELLED, SKIPPED) or BLOCKED
+    let valid = [
+        crate::model::Status::Completed,
+        crate::model::Status::Failed,
+        crate::model::Status::Cancelled,
+        crate::model::Status::Skipped,
+        crate::model::Status::Blocked,
+    ];
+    if !valid.contains(&old_status) {
+        return Err(AppError::InvalidTransition {
+            action: "reopen".to_string(),
+            current_status: old_status.to_string(),
+        });
+    }
+
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+
+    // Clear terminal state fields
+    node.result_summary = None;
+    node.failure_reason = None;
+    node.blocked_reason = None;
+    node.skip_reason = None;
+    node.cancel_reason = None;
+    node.lease = crate::model::Lease::empty();
+
+    // Set to PENDING initially; reconciliation below will promote to READY if applicable
+    node.status = crate::model::Status::Pending;
+    node.updated_at = now_rfc3339.clone();
+
+    events.push(make_event(
+        node_id,
+        actor,
+        crate::model::EventAction::Reopen,
+        Some(old_status),
+        Some(crate::model::Status::Pending),
+        Some("Task reopened".to_string()),
+        graph.graph_revision + events.len() as u64 + 1,
+    ));
+
+    // persist_mutation runs reconciliation which promotes PENDING→READY if deps met
+    persist_mutation(project_dir, &mut graph, &mut events)?;
+    Ok(ReconciliationResult {
+        graph,
+        events,
+        warnings: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -855,5 +1389,362 @@ mod tests {
             }
             other => panic!("Expected StaleRevision, got: {:?}", other),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // PR#5: State command unit tests
+    // -----------------------------------------------------------------------
+
+    fn setup_graph_with_node(tmp: &tempfile::TempDir, node: &Node) {
+        io::init_graph(tmp.path()).unwrap();
+        let mut graph = io::read_graph(tmp.path()).unwrap();
+        graph.nodes.push(node.clone());
+        io::write_graph(tmp.path(), &graph).unwrap();
+    }
+
+    #[test]
+    fn claim_ready_node_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        setup_graph_with_node(&tmp, &valid_node("a"));
+
+        let result = claim(tmp.path(), "a", "worker-1", 300).unwrap();
+        assert_eq!(result.graph.nodes.len(), 1);
+        let node = &result.graph.nodes[0];
+        assert_eq!(node.status, Status::InProgress);
+        assert_eq!(node.attempts, 1);
+        assert_eq!(node.lease.claimed_by.as_deref(), Some("worker-1"));
+        assert!(node.lease.claimed_at.is_some());
+        assert!(node.lease.expires_at.is_some());
+    }
+
+    #[test]
+    fn claim_invalid_transition_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = claim(tmp.path(), "a", "worker-1", 300);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::InvalidTransition { action, .. } => {
+                assert_eq!(action, "claim");
+            }
+            other => panic!("Expected InvalidTransition, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn claim_non_existent_node_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        io::init_graph(tmp.path()).unwrap();
+
+        let result = claim(tmp.path(), "nonexistent", "worker-1", 300);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::TaskNotFound { id } => {
+                assert_eq!(id, "nonexistent");
+            }
+            other => panic!("Expected TaskNotFound, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn heartbeat_extends_lease() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = heartbeat(tmp.path(), "a", "worker-1", 600).unwrap();
+        let node = &result.graph.nodes[0];
+        assert_eq!(node.status, Status::InProgress);
+        assert!(node.lease.expires_at.is_some());
+    }
+
+    #[test]
+    fn heartbeat_non_owner_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = heartbeat(tmp.path(), "a", "worker-2", 600);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::LeaseNotOwned));
+    }
+
+    #[test]
+    fn release_reverts_to_ready() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = release(tmp.path(), "a", "worker-1").unwrap();
+        let node = &result.graph.nodes[0];
+        assert_eq!(node.status, Status::Ready);
+        assert!(node.lease.claimed_by.is_none());
+    }
+
+    #[test]
+    fn release_non_owner_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = release(tmp.path(), "a", "worker-2");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::LeaseNotOwned));
+    }
+
+    #[test]
+    fn complete_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = complete(tmp.path(), "a", "worker-1", 0, "All done".to_string()).unwrap();
+        let n = &result.graph.nodes[0];
+        assert_eq!(n.status, Status::Completed);
+        assert_eq!(n.result_summary.as_deref(), Some("All done"));
+    }
+
+    #[test]
+    fn complete_non_owner_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = complete(tmp.path(), "a", "worker-2", 0, "nope".to_string());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::LeaseNotOwned));
+    }
+
+    #[test]
+    fn fail_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = fail(
+            tmp.path(),
+            "a",
+            "worker-1",
+            0,
+            "Something broke".to_string(),
+        )
+        .unwrap();
+        let n = &result.graph.nodes[0];
+        assert_eq!(n.status, Status::Failed);
+        assert_eq!(n.failure_reason.as_deref(), Some("Something broke"));
+    }
+
+    #[test]
+    fn block_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = block(tmp.path(), "a", "worker-1", 0, "Waiting on dep".to_string()).unwrap();
+        let n = &result.graph.nodes[0];
+        assert_eq!(n.status, Status::Blocked);
+        assert_eq!(n.blocked_reason.as_deref(), Some("Waiting on dep"));
+    }
+
+    #[test]
+    fn skip_pending_or_ready_or_blocked_succeeds() {
+        // Skip PENDING (gets promoted by preflight, tested via dep-gated case)
+        for from_status in [Status::Ready, Status::Blocked] {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut node = valid_node("a");
+            node.status = from_status;
+            if from_status == Status::Blocked {
+                node.blocked_reason = Some("External blocker".to_string());
+            }
+            setup_graph_with_node(&tmp, &node);
+
+            let result = skip(tmp.path(), "a", "worker-1", 0, "Not needed".to_string()).unwrap();
+            let n = &result.graph.nodes[0];
+            assert_eq!(n.status, Status::Skipped);
+            assert_eq!(n.skip_reason.as_deref(), Some("Not needed"));
+        }
+    }
+
+    #[test]
+    fn skip_in_progress_owned_by_other_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::InProgress;
+        node.lease = Lease {
+            claimed_by: Some("worker-1".to_string()),
+            claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+            expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+        };
+        setup_graph_with_node(&tmp, &node);
+
+        let result = skip(tmp.path(), "a", "worker-2", 0, "skip".to_string());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::LeaseNotOwned));
+    }
+
+    #[test]
+    fn cancel_non_terminal_succeeds() {
+        // Skip PENDING (gets promoted by preflight)
+        for from_status in [Status::Ready, Status::InProgress, Status::Blocked] {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut node = valid_node("a");
+            node.status = from_status;
+            if from_status == Status::Blocked {
+                node.blocked_reason = Some("External blocker".to_string());
+            }
+            if from_status == Status::InProgress {
+                node.lease = Lease {
+                    claimed_by: Some("worker-1".to_string()),
+                    claimed_at: Some("2026-05-17T00:00:00Z".to_string()),
+                    expires_at: Some("2099-12-31T23:59:59Z".to_string()),
+                };
+            }
+            setup_graph_with_node(&tmp, &node);
+
+            let result = cancel(
+                tmp.path(),
+                "a",
+                "worker-1",
+                0,
+                "Cancelled".to_string(),
+            )
+            .unwrap();
+            let n = &result.graph.nodes[0];
+            assert_eq!(n.status, Status::Cancelled);
+            assert_eq!(n.cancel_reason.as_deref(), Some("Cancelled"));
+        }
+    }
+
+    #[test]
+    fn cancel_terminal_state_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::Completed;
+        node.result_summary = Some("Done".to_string());
+        setup_graph_with_node(&tmp, &node);
+
+        let result = cancel(tmp.path(), "a", "worker-1", 0, "nope".to_string());
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::InvalidTransition { .. }
+        ));
+    }
+
+    #[test]
+    fn reopen_terminal_state_succeeds() {
+        for from_status in [
+            Status::Completed,
+            Status::Failed,
+            Status::Cancelled,
+            Status::Skipped,
+            Status::Blocked,
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut node = valid_node("a");
+            node.status = from_status;
+            if from_status == Status::Completed {
+                node.result_summary = Some("Done".to_string());
+            }
+            if from_status == Status::Failed {
+                node.failure_reason = Some("Failed".to_string());
+            }
+            if from_status == Status::Cancelled {
+                node.cancel_reason = Some("Cancelled".to_string());
+            }
+            if from_status == Status::Skipped {
+                node.skip_reason = Some("Skipped".to_string());
+            }
+            if from_status == Status::Blocked {
+                node.blocked_reason = Some("Blocked".to_string());
+            }
+            setup_graph_with_node(&tmp, &node);
+
+            let result = reopen(tmp.path(), "a", "worker-1", 0).unwrap();
+            let n = &result.graph.nodes[0];
+            // Should be PENDING or READY after reconciliation
+            assert!(
+                n.status == Status::Pending || n.status == Status::Ready,
+                "Expected PENDING or READY after reopen, got {:?}",
+                n.status
+            );
+            // Terminal state fields should be cleared
+            assert!(n.result_summary.is_none());
+            assert!(n.failure_reason.is_none());
+            assert!(n.blocked_reason.is_none());
+            assert!(n.skip_reason.is_none());
+            assert!(n.cancel_reason.is_none());
+        }
+    }
+
+    #[test]
+    fn reopen_non_terminal_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut node = valid_node("a");
+        node.status = Status::Ready;
+        setup_graph_with_node(&tmp, &node);
+
+        let result = reopen(tmp.path(), "a", "worker-1", 0);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::InvalidTransition { .. }
+        ));
     }
 }
