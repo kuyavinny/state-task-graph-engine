@@ -1051,3 +1051,477 @@ nodes:
         .failure()
         .stdout(predicates::str::contains("task-b"));
 }
+
+#[test]
+fn summarize_returns_context_payload() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 1
+nodes:
+  - id: "root"
+    parent_id: null
+    title: "Root"
+    description: "Root task"
+    priority: 0
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "a"
+    parent_id: "root"
+    title: "Active Task"
+    description: "Active"
+    priority: 5
+    status: "READY"
+    dependencies: ["b"]
+    created_at: "2026-05-17T00:00:01Z"
+    updated_at: "2026-05-17T00:00:01Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "b"
+    parent_id: null
+    title: "Dep"
+    description: "Completed dep"
+    priority: 1
+    status: "COMPLETED"
+    dependencies: []
+    created_at: "2026-05-17T00:00:02Z"
+    updated_at: "2026-05-17T00:00:02Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: "Dep done"
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "c"
+    parent_id: null
+    title: "Dependent"
+    description: "Depends on a"
+    priority: 1
+    status: "PENDING"
+    dependencies: ["a"]
+    created_at: "2026-05-17T00:00:03Z"
+    updated_at: "2026-05-17T00:00:03Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "d"
+    parent_id: null
+    title: "Blocked"
+    description: "Blocked task"
+    priority: 1
+    status: "BLOCKED"
+    dependencies: []
+    created_at: "2026-05-17T00:00:04Z"
+    updated_at: "2026-05-17T00:00:04Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: "Waiting for input"
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "e"
+    parent_id: null
+    title: "Completed"
+    description: "Completed task"
+    priority: 1
+    status: "COMPLETED"
+    dependencies: []
+    created_at: "2026-05-17T00:00:05Z"
+    updated_at: "2026-05-17T00:00:05Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: "Completed summary"
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    let events = [
+        r#"{"event_id":"test-1","timestamp":"2026-05-17T00:01:00Z","graph_revision_before":0,"graph_revision_after":1,"node_id":"a","actor":"worker-1","action":"claim","from_status":null,"to_status":null,"reason":"Testing","metadata":null}"#,
+    ];
+    let events_path = tmp.path().join(".agent").join("task_events.jsonl");
+    std::fs::write(&events_path, events.join("\n")).unwrap();
+
+    let output = stg()
+        .args([
+            "summarize",
+            "a",
+            "--max-events",
+            "1",
+            "--max-completed-summaries",
+            "1",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], true);
+    let data = &envelope["data"];
+
+    assert_eq!(data["active_task"]["id"], "a");
+    assert_eq!(data["parent_chain"].as_array().unwrap().len(), 1);
+    assert_eq!(data["parent_chain"][0]["id"], "root");
+    assert_eq!(data["immediate_dependencies"].as_array().unwrap().len(), 1);
+    assert_eq!(data["immediate_dependencies"][0]["id"], "b");
+    assert_eq!(
+        data["immediate_dependencies"][0]["result_summary"],
+        "Dep done"
+    );
+    assert_eq!(data["dependent_tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(data["dependent_tasks"][0]["id"], "c");
+    assert_eq!(
+        data["blocked_or_failed_related"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(data["blocked_or_failed_related"][0]["id"], "d");
+    assert_eq!(data["recent_events"].as_array().unwrap().len(), 1);
+    assert_eq!(data["recent_events"][0]["reason"], "Testing");
+    assert_eq!(data["completed_summaries"].as_array().unwrap().len(), 1);
+    assert_eq!(data["completed_summaries"][0]["id"], "e");
+    assert_eq!(
+        data["completed_summaries"][0]["result_summary"],
+        "Completed summary"
+    );
+    assert!(data["operator_notes"].is_null());
+}
+
+#[test]
+fn summarize_respects_max_events_and_max_completed_summaries() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 3
+nodes:
+  - id: "a"
+    parent_id: null
+    title: "Active Task"
+    description: "Active"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "b"
+    parent_id: null
+    title: "Completed 1"
+    description: "Completed"
+    priority: 1
+    status: "COMPLETED"
+    dependencies: []
+    created_at: "2026-05-17T00:00:01Z"
+    updated_at: "2026-05-17T00:00:01Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: "Summary 1"
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "c"
+    parent_id: null
+    title: "Completed 2"
+    description: "Completed"
+    priority: 1
+    status: "COMPLETED"
+    dependencies: []
+    created_at: "2026-05-17T00:00:02Z"
+    updated_at: "2026-05-17T00:00:02Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: "Summary 2"
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    let events = [
+        r#"{"event_id":"test-1","timestamp":"2026-05-17T00:01:00Z","graph_revision_before":0,"graph_revision_after":1,"node_id":"a","actor":"worker-1","action":"claim","from_status":null,"to_status":null,"reason":"Event 1","metadata":null}"#,
+        r#"{"event_id":"test-2","timestamp":"2026-05-17T00:02:00Z","graph_revision_before":1,"graph_revision_after":2,"node_id":"a","actor":"worker-1","action":"release","from_status":null,"to_status":null,"reason":"Event 2","metadata":null}"#,
+        r#"{"event_id":"test-3","timestamp":"2026-05-17T00:03:00Z","graph_revision_before":2,"graph_revision_after":3,"node_id":"a","actor":"worker-1","action":"claim","from_status":null,"to_status":null,"reason":"Event 3","metadata":null}"#,
+    ];
+    let events_path = tmp.path().join(".agent").join("task_events.jsonl");
+    std::fs::write(&events_path, events.join("\n")).unwrap();
+
+    let output = stg()
+        .args([
+            "summarize",
+            "a",
+            "--max-events",
+            "2",
+            "--max-completed-summaries",
+            "1",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let data = &envelope["data"];
+
+    assert_eq!(data["recent_events"].as_array().unwrap().len(), 2);
+    assert_eq!(data["recent_events"][0]["reason"], "Event 3");
+    assert_eq!(data["recent_events"][1]["reason"], "Event 2");
+    assert_eq!(data["completed_summaries"].as_array().unwrap().len(), 1);
+    assert_eq!(data["completed_summaries"][0]["id"], "c");
+}
+
+#[test]
+fn summarize_excludes_blocked_when_include_blocked_false() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "a"
+    parent_id: null
+    title: "Active Task"
+    description: "Active"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+  - id: "b"
+    parent_id: null
+    title: "Blocked"
+    description: "Blocked task"
+    priority: 1
+    status: "BLOCKED"
+    dependencies: []
+    created_at: "2026-05-17T00:00:01Z"
+    updated_at: "2026-05-17T00:00:01Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: "Waiting"
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    let output = stg()
+        .args(["summarize", "a", "--include-blocked", "false"])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let data = &envelope["data"];
+
+    assert_eq!(
+        data["blocked_or_failed_related"].as_array().unwrap().len(),
+        0
+    );
+}
+
+#[test]
+fn summarize_returns_error_on_malformed_event_log() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 0
+nodes:
+  - id: "a"
+    parent_id: null
+    title: "Active Task"
+    description: "Active"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    write_graph(&tmp, yaml);
+
+    // Write malformed JSONL
+    let events_path = tmp.path().join(".agent").join("task_events.jsonl");
+    std::fs::write(&events_path, "not-valid-json-at-all\n").unwrap();
+
+    let output = stg()
+        .args(["summarize", "a"])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], false);
+    assert_eq!(envelope["error"]["code"], "SERIALIZATION_ERROR");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("EVENT_LOG_PARSE_ERROR")
+    );
+}
+
+#[test]
+fn summarize_propagates_desync_warning() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    init_project(&tmp);
+
+    // Write a graph with mismatched revision
+    let graph_path = tmp.path().join(".agent").join("task_graph.yaml");
+    let yaml = r#"
+schema_version: "1.0"
+graph_revision: 5
+nodes:
+  - id: "a"
+    parent_id: null
+    title: "Task"
+    description: "Task"
+    priority: 5
+    status: "READY"
+    dependencies: []
+    created_at: "2026-05-17T00:00:00Z"
+    updated_at: "2026-05-17T00:00:00Z"
+    attempts: 0
+    max_attempts: 3
+    lease: { claimed_by: null, claimed_at: null, expires_at: null }
+    result_summary: null
+    failure_reason: null
+    blocked_reason: null
+    skip_reason: null
+    cancel_reason: null
+    evidence: []
+    artifacts: []
+    data: null
+"#;
+    std::fs::write(&graph_path, yaml).unwrap();
+
+    // Write an event log with revision 3
+    let events_path = tmp.path().join(".agent").join("task_events.jsonl");
+    let event = r#"{"event_id":"test-1","timestamp":"2026-05-17T00:00:00Z","graph_revision_before":2,"graph_revision_after":3,"node_id":"a","actor":"system","action":"init","from_status":null,"to_status":null,"reason":null,"metadata":null}"#;
+    std::fs::write(&events_path, event).unwrap();
+
+    let output = stg()
+        .args(["summarize", "a"])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], true);
+    assert!(envelope["warnings"].is_array());
+    let warnings = envelope["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].as_str().unwrap().contains("EVENT_LOG_DESYNC"));
+    assert_eq!(envelope["data"]["active_task"]["id"], "a");
+}

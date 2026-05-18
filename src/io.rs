@@ -1,7 +1,34 @@
 use crate::error::AppError;
 use crate::model::Graph;
 
+use crate::model::Event;
 use std::path::Path;
+
+/// Read the entire event log from `.agent/task_events.jsonl`.
+/// Returns all events in chronological order.
+pub fn read_events(project_dir: &Path) -> Result<Vec<Event>, AppError> {
+    let events_path = project_dir.join(".agent").join(EVENTS_FILE);
+    if !events_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(events_path)?;
+    let mut events = Vec::new();
+    for (line_num, line) in content.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Event>(line) {
+            Ok(event) => events.push(event),
+            Err(e) => {
+                return Err(AppError::EventLogParseError {
+                    line: line_num + 1,
+                    source: e,
+                });
+            }
+        }
+    }
+    Ok(events)
+}
 
 /// File names for the canonical v1 formats.
 pub const GRAPH_FILE: &str = "task_graph.yaml";
