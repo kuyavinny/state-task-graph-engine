@@ -26,6 +26,21 @@ pub enum ReconciliationWarning {
     },
 }
 
+impl std::fmt::Display for ReconciliationWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReconciliationWarning::EventLogDesync {
+                graph_revision,
+                event_log_revision,
+            } => write!(
+                f,
+                "EVENT_LOG_DESYNC: Graph revision {} does not match event log revision {}",
+                graph_revision, event_log_revision
+            ),
+        }
+    }
+}
+
 /// Load the graph, validate it, run reconciliation, and return the result.
 ///
 /// If validation fails, returns an error immediately.
@@ -943,6 +958,126 @@ pub fn reopen(
         events,
         warnings: Vec::new(),
     })
+}
+
+/// Bounded context payload for LLM integration.
+/// Returns only the data needed to avoid context bloat.
+pub fn summarize(
+    graph: &Graph,
+    events: &[Event],
+    node_id: &str,
+    max_events: usize,
+    max_completed_summaries: usize,
+    include_blocked: bool,
+) -> Result<serde_json::Value, AppError> {
+    let active_task = graph
+        .nodes
+        .iter()
+        .find(|n| n.id == node_id)
+        .ok_or_else(|| AppError::TaskNotFound {
+            id: node_id.to_string(),
+        })?;
+
+    let mut parent_chain = Vec::new();
+    let mut current_parent = active_task.parent_id.as_deref();
+    while let Some(parent_id) = current_parent {
+        if let Some(parent) = graph.nodes.iter().find(|n| n.id == parent_id) {
+            parent_chain.push(serde_json::json!({"id": parent.id, "title": parent.title}));
+            current_parent = parent.parent_id.as_deref();
+        } else {
+            break;
+        }
+    }
+    parent_chain.reverse();
+
+    let mut immediate_dependencies = Vec::new();
+    for dep_id in &active_task.dependencies {
+        if let Some(dep) = graph.nodes.iter().find(|n| n.id == *dep_id) {
+            immediate_dependencies.push(serde_json::json!({
+                "id": dep.id,
+                "status": dep.status,
+                "result_summary": if matches!(dep.status, Status::Completed | Status::Skipped) {
+                    dep.result_summary.clone()
+                } else {
+                    None
+                },
+            }));
+        }
+    }
+
+    let dependent_tasks: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.dependencies.iter().any(|d| d == node_id))
+        .map(|n| serde_json::json!({"id": n.id, "title": n.title}))
+        .collect();
+
+    let mut blocked_or_failed_related = Vec::new();
+    if include_blocked {
+        for node in &graph.nodes {
+            if node.id != node_id && matches!(node.status, Status::Blocked | Status::Failed) {
+                let reason = if node.status == Status::Blocked {
+                    node.blocked_reason.clone()
+                } else {
+                    node.failure_reason.clone()
+                };
+                blocked_or_failed_related.push(serde_json::json!({
+                    "id": node.id,
+                    "status": node.status,
+                    "reason": reason,
+                }));
+            }
+        }
+    }
+
+    let recent_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.node_id == node_id)
+        .rev()
+        .take(max_events)
+        .map(|e| {
+            serde_json::json!({
+                "timestamp": e.timestamp,
+                "action": e.action,
+                "reason": e.reason,
+            })
+        })
+        .collect();
+
+    let mut completed_summaries: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.status, Status::Completed | Status::Skipped))
+        .filter_map(|n| {
+            n.result_summary.as_ref().map(|summary| {
+                serde_json::json!({
+                    "id": n.id,
+                    "title": n.title,
+                    "result_summary": summary,
+                })
+            })
+        })
+        .collect();
+    completed_summaries.reverse();
+    completed_summaries.truncate(max_completed_summaries);
+
+    let operator_notes = None::<String>;
+
+    Ok(serde_json::json!({
+        "active_task": {
+            "id": active_task.id,
+            "title": active_task.title,
+            "description": active_task.description,
+            "data": active_task.data,
+        },
+        "parent_chain": parent_chain,
+        "immediate_dependencies": immediate_dependencies,
+        "dependent_tasks": dependent_tasks,
+        "blocked_or_failed_related": blocked_or_failed_related,
+        "recent_events": recent_events,
+        "completed_summaries": completed_summaries,
+        "operator_notes": operator_notes,
+    }))
 }
 
 #[cfg(test)]

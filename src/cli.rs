@@ -147,7 +147,7 @@ pub enum Commands {
         #[arg(long, default_value = "5")]
         max_completed_summaries: usize,
         /// Whether to include blocked/failed related nodes
-        #[arg(long, default_value = "true")]
+        #[arg(long, action = clap::ArgAction::Set, default_value = "true", value_name = "BOOL")]
         include_blocked: bool,
     },
 }
@@ -193,19 +193,7 @@ impl Cli {
                     *counts.entry(status_str).or_insert(0) += 1;
                 }
 
-                let warnings: Vec<String> = result
-                    .warnings
-                    .iter()
-                    .map(|w| match w {
-                        reconcile::ReconciliationWarning::EventLogDesync {
-                            graph_revision,
-                            event_log_revision,
-                        } => format!(
-                            "EVENT_LOG_DESYNC: Graph revision {} does not match event log revision {}",
-                            graph_revision, event_log_revision
-                        ),
-                    })
-                    .collect();
+                let warnings: Vec<String> = result.warnings.iter().map(|w| w.to_string()).collect();
 
                 let data = serde_json::json!({
                     "revision": result.graph.graph_revision,
@@ -431,7 +419,29 @@ impl Cli {
                 println!("{}", serde_json::to_string_pretty(&envelope)?);
                 Ok(())
             }
-            Commands::Summarize { .. } => Err(AppError::NotImplemented("summarize".into())),
+            Commands::Summarize {
+                node_id,
+                max_events,
+                max_completed_summaries,
+                include_blocked,
+            } => {
+                let dir = std::env::current_dir()?;
+                let result = reconcile::load_validate_reconcile(&dir)?;
+                let events = io::read_events(&dir)?;
+                let data = reconcile::summarize(
+                    &result.graph,
+                    &events,
+                    &node_id,
+                    max_events,
+                    max_completed_summaries,
+                    include_blocked,
+                )?;
+                let warnings = result.warnings.iter().map(|w| w.to_string()).collect();
+                let envelope: ResponseEnvelope<serde_json::Value> =
+                    ResponseEnvelope::ok_with_warnings(result.graph.graph_revision, data, warnings);
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                Ok(())
+            }
         }
     }
 }

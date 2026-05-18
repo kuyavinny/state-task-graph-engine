@@ -47,6 +47,11 @@ pub enum AppError {
 
     #[error("Event log desync detected")]
     EventLogDesync,
+    #[error("EVENT_LOG_PARSE_ERROR: failed to parse event log at line {line}: {source}")]
+    EventLogParseError {
+        line: usize,
+        source: serde_json::Error,
+    },
 
     #[error("File not found: {path}")]
     FileNotFound { path: String },
@@ -87,6 +92,7 @@ impl AppError {
             AppError::TaskNotFound { .. } => ErrorCode::TaskNotFound,
             AppError::MaxAttemptsExceeded { .. } => ErrorCode::MaxAttemptsExceeded,
             AppError::EventLogDesync => ErrorCode::EventLogDesync,
+            AppError::EventLogParseError { .. } => ErrorCode::SerializationError,
             AppError::FileNotFound { .. } => ErrorCode::FileNotFound,
             AppError::AtomicWriteFailed { .. } => ErrorCode::AtomicWriteFailed,
             AppError::NotImplemented(_) => ErrorCode::NotImplemented,
