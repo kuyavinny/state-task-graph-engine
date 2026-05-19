@@ -1,2 +1,3 @@
 /target
-.agent/.rpiv/artifacts/
+.agent/
+.rpiv/artifacts/

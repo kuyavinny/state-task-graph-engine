@@ -1,6 +1,10 @@
 use crate::config::{AdapterConfig, default_config};
 use crate::error::AdapterError;
+use crate::graph_client::GraphEngineClient;
+use crate::graph_runner::{RealRunner, RealRunnerConfig};
+use crate::logger::AdapterLogger;
 use crate::response::{self, SuccessEnvelope};
+use crate::task_packet::CanonicalTaskPacket;
 
 use clap::{Parser, Subcommand};
 
@@ -23,6 +27,12 @@ pub enum Commands {
     ValidateProfile,
     /// List all profile names and their identities
     ListProfiles,
+    /// Acquire the next available task from the graph engine
+    GetWork {
+        /// Profile name to use for actor resolution and permissions
+        #[arg(long)]
+        profile: String,
+    },
 }
 
 /// Directory for adapter-owned files relative to the project root.
@@ -38,6 +48,7 @@ impl Cli {
             Commands::InitProfile => init_profile(),
             Commands::ValidateProfile => validate_profile(),
             Commands::ListProfiles => list_profiles(),
+            Commands::GetWork { profile } => get_work(&profile),
         }
     }
 }
@@ -167,6 +178,63 @@ fn list_profiles() -> Result<(), AdapterError> {
     });
 
     let envelope = SuccessEnvelope::new(&config.default_profile, &actor, data);
+    response::output_success(&envelope)
+}
+
+/// Acquire the next available task using the graph engine.
+///
+/// 1. Loads config and validates the named profile exists.
+/// 2. Checks `permissions.allow_claim`.
+/// 3. Resolves actor from profile.
+/// 4. Builds a `GraphEngineClient` with `RealRunner`.
+/// 5. Orchestrates `next → claim → summarize` via [`GraphEngineClient::get_work`].
+/// 6. Outputs a `SuccessEnvelope<CanonicalTaskPacket>`.
+fn get_work(profile_name: &str) -> Result<(), AdapterError> {
+    let config_path = config_path()?;
+    if !config_path.exists() {
+        return Err(AdapterError::ProfileNotFound {
+            name: config_path.to_string_lossy().to_string(),
+        });
+    }
+    let content = std::fs::read_to_string(&config_path)?;
+    let config: AdapterConfig = serde_yaml::from_str(&content)?;
+    config.validate()?;
+
+    let profile = config
+        .profiles
+        .iter()
+        .find(|p| p.name == profile_name)
+        .ok_or_else(|| AdapterError::ProfileNotFound {
+            name: profile_name.to_string(),
+        })?;
+
+    if !profile.permissions.allow_claim {
+        return Err(AdapterError::ProfilePermissionDenied {
+            message: format!(
+                "profile '{}' does not have allow_claim permission",
+                profile_name
+            ),
+        });
+    }
+
+    let actor = resolve_profile_actor(&config, profile_name);
+
+    let runner_config = RealRunnerConfig {
+        binary_path: config.graph_engine_binary_path.clone(),
+        timeout: None,
+        env: std::collections::HashMap::new(),
+        working_dir: None,
+    };
+    let runner = RealRunner::new(runner_config);
+    let base_dir = std::env::current_dir().map_err(|e| AdapterError::Io {
+        message: format!("cannot determine current directory: {}", e),
+    })?;
+    let logger = AdapterLogger::default_path(&base_dir);
+    let client = GraphEngineClient::with_logger(Box::new(runner), logger, &actor);
+
+    let packet: CanonicalTaskPacket = client.get_work(&actor)?;
+
+    let envelope = SuccessEnvelope::new(profile_name, &actor, serde_json::to_value(packet)?);
     response::output_success(&envelope)
 }
 
