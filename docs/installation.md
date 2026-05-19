@@ -30,10 +30,10 @@ For optimized performance:
 cargo build --release
 ```
 
-The binary is at `target/release/state-task-graph-engine`. You can copy it to any directory on your `PATH`:
+The binary is at `target/release/stg`. You can copy it to any directory on your `PATH`:
 
 ```bash
-cp target/release/state-task-graph-engine /usr/local/bin/stg
+cp target/release/stg /usr/local/bin/stg
 ```
 
 ## Cross-Compilation

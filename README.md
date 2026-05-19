@@ -54,7 +54,7 @@ stg summarize TASK-001 --max-events 10 --max-completed-summaries 5
 
 | Command | Description |
 |---------|-------------|
-| `init` | Create `.agent/` directory with empty graph and event log |
+| `init` | Create `.agent/` directory with empty graph and event log containing an `init` event |
 | `status` | Return the high-level progress of the graph |
 | `validate` | Run schema and cycle validation checks |
 | `next` | Return the highest-priority READY task |

@@ -39,7 +39,7 @@ pub const AGENT_DIR: &str = ".agent";
 ///
 /// Creates the `.agent/` directory and writes:
 /// - `.agent/task_graph.yaml` — empty initial graph
-/// - `.agent/task_events.jsonl` — empty event log
+/// - `.agent/task_events.jsonl` — event log with an `init` event
 pub fn init_graph(project_dir: &Path) -> Result<(), AppError> {
     let agent_dir = project_dir.join(AGENT_DIR);
 
@@ -59,9 +59,21 @@ pub fn init_graph(project_dir: &Path) -> Result<(), AppError> {
     let graph = Graph::new();
     write_graph(project_dir, &graph)?;
 
-    // Write empty event log
-    let events_path = agent_dir.join(EVENTS_FILE);
-    std::fs::write(&events_path, "")?;
+    // Write init event
+    let init_event = crate::model::Event {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        graph_revision_before: 0,
+        graph_revision_after: 0,
+        node_id: "__graph__".to_string(),
+        actor: "system".to_string(),
+        action: crate::model::EventAction::Init,
+        from_status: None,
+        to_status: None,
+        reason: Some("Graph initialized".to_string()),
+        metadata: serde_json::Value::Null,
+    };
+    append_events_batch(project_dir, &[init_event])?;
 
     Ok(())
 }
@@ -250,8 +262,12 @@ mod tests {
         assert!(content.contains("test-uuid"));
         assert!(content.contains("init"));
 
-        // Parse it back
-        let parsed: Event = serde_json::from_str(content.trim()).unwrap();
+        // Parse it back — find the line containing our test event
+        let parsed: Event = content
+            .lines()
+            .find(|line| line.contains("test-uuid"))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .unwrap();
         assert_eq!(parsed.event_id, "test-uuid");
     }
 

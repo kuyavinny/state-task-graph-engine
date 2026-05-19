@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn stg() -> Command {
-    Command::cargo_bin("state-task-graph-engine").unwrap()
+    Command::cargo_bin("stg").unwrap()
 }
 
 #[test]
@@ -131,14 +131,29 @@ fn init_graph_yaml_is_valid() {
 }
 
 #[test]
-fn init_events_file_is_empty() {
+fn init_events_file_contains_init_event() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
     stg().arg("init").current_dir(tmp.path()).assert().success();
 
     let events_content =
         std::fs::read_to_string(tmp.path().join(".agent/task_events.jsonl")).unwrap();
-    assert!(events_content.is_empty());
+    assert!(
+        !events_content.is_empty(),
+        "Event log should contain an init event"
+    );
+    assert!(
+        events_content.contains("init"),
+        "Event log should contain an init action"
+    );
+    assert!(
+        events_content.contains("__graph__"),
+        "Init event should have __graph__ node_id"
+    );
+    assert!(
+        events_content.contains("system"),
+        "Init event should have system actor"
+    );
 }
 
 #[test]
