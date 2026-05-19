@@ -1,79 +1,165 @@
 use crate::error::AdapterError;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Trait for abstracting subprocess execution. Separates real subprocess
 /// invocations from test doubles so the adapter can be tested without a
 /// real graph engine binary.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
 pub trait GraphRunner: Send + Sync {
     /// Execute the graph engine binary with the given argument array.
     /// Returns the raw stdout on success, or an error describing what went
-    /// wrong (nonzero exit, binary not found, malformed JSON, etc.).
-    fn execute(&self,
-        args: &[&str],
-    ) -> Result<String, AdapterError>;
+    /// wrong (nonzero exit, binary not found, malformed JSON, timeout, etc.).
+    fn execute(&self, args: &[&str]) -> Result<String, AdapterError>;
+}
+
+/// Configuration for [`RealRunner`].
+#[derive(Debug, Clone)]
+pub struct RealRunnerConfig {
+    /// Path to the graph engine binary (e.g., "agent-graph").
+    pub binary_path: String,
+    /// Optional timeout for subprocess execution. Defaults to 30 seconds.
+    pub timeout: Option<Duration>,
+    /// Environment variables to inject into the subprocess. Keys are
+    /// variable names; values are set on the child process environment
+    /// (inheriting the parent environment for unset keys).
+    pub env: HashMap<String, String>,
+    /// Optional working directory for the subprocess. When `None`,
+    /// inherits the current directory.
+    pub working_dir: Option<String>,
+}
+
+impl Default for RealRunnerConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: "agent-graph".to_string(),
+            timeout: Some(Duration::from_secs(30)),
+            env: HashMap::new(),
+            working_dir: None,
+        }
+    }
 }
 
 /// Runs the graph engine binary via `std::process::Command`.
 /// Must never use shell interpolation — arguments are passed as-is.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+/// Supports optional timeout and environment injection.
 pub struct RealRunner {
-    binary_path: String,
+    config: RealRunnerConfig,
 }
 
 impl RealRunner {
-    pub fn new(binary_path: String) -> Self {
-        Self { binary_path }
+    pub fn new(config: RealRunnerConfig) -> Self {
+        Self { config }
     }
 }
 
 impl GraphRunner for RealRunner {
     fn execute(&self, args: &[&str]) -> Result<String, AdapterError> {
-        let output = std::process::Command::new(&self.binary_path)
-            .args(args)
-            .output()
-            .map_err(|_| AdapterError::GraphEngineUnavailable)?;
+        let mut cmd = std::process::Command::new(&self.config.binary_path);
+        cmd.args(args);
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AdapterError::GraphEngineNonzeroExit {
-                message: format!(
-                    "exit code {:?} – stderr: {}",
-                    output.status.code(),
-                    stderr.trim()
-                ),
-            });
+        // Inject environment variables (child inherits parent env, then overrides)
+        for (key, value) in &self.config.env {
+            cmd.env(key, value);
         }
 
-        Ok(stdout)
+        // Set working directory if specified
+        if let Some(ref dir) = self.config.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        let start = Instant::now();
+        let timeout = self
+            .config
+            .timeout
+            .unwrap_or(Duration::from_secs(30));
+
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    AdapterError::GraphEngineUnavailable
+                } else {
+                    AdapterError::GraphEngineNonzeroExit {
+                        message: format!("failed to spawn graph engine: {}", e),
+                    }
+                }
+            })?;
+
+        // Wait with timeout
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let output = child.wait_with_output().map_err(|_| {
+                        AdapterError::GraphEngineNonzeroExit {
+                            message: "graph engine process disappeared".to_string(),
+                        }
+                    })?;
+
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+                    if !status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        return Err(AdapterError::GraphEngineNonzeroExit {
+                            message: format!(
+                                "exit code {:?} – stderr: {}",
+                                status.code(),
+                                stderr.trim()
+                            ),
+                        });
+                    }
+
+                    return Ok(stdout);
+                }
+                Ok(None) => {
+                    if start.elapsed() > timeout {
+                        let _ = child.kill();
+                        return Err(AdapterError::GraphEngineNonzeroExit {
+                            message: format!(
+                                "graph engine timed out after {}s",
+                                timeout.as_secs()
+                            ),
+                        });
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => {
+                    return Err(AdapterError::GraphEngineNonzeroExit {
+                        message: format!("failed to wait on graph engine: {}", e),
+                    });
+                }
+            }
+        }
     }
 }
 
 /// Test double that returns pre-programmed responses instead of spawning a
 /// real subprocess. Simulates graph engine crashes, malformed JSON,
 /// nonzero exits, and `STALE_REVISION`.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
 pub struct MockRunner {
-    responses: std::collections::HashMap<String, String>,
+    responses: HashMap<String, String>,
     force_crash: bool,
     force_malformed: bool,
     force_stale: bool,
+    force_timeout: bool,
 }
 
 impl MockRunner {
     pub fn new() -> Self {
         Self {
-            responses: std::collections::HashMap::new(),
+            responses: HashMap::new(),
             force_crash: false,
             force_malformed: false,
             force_stale: false,
+            force_timeout: false,
         }
     }
 
     /// Pre-load a response for a given command string.
     pub fn set_response(&mut self, command: &str, response: &str) {
-        self.responses.insert(command.to_string(), response.to_string());
+        self.responses
+            .insert(command.to_string(), response.to_string());
     }
 
     /// Simulate a graph engine crash (nonzero exit).
@@ -90,6 +176,11 @@ impl MockRunner {
     pub fn set_force_stale(&mut self) {
         self.force_stale = true;
     }
+
+    /// Simulate a subprocess timeout.
+    pub fn set_force_timeout(&mut self) {
+        self.force_timeout = true;
+    }
 }
 
 impl GraphRunner for MockRunner {
@@ -100,16 +191,26 @@ impl GraphRunner for MockRunner {
             });
         }
 
+        if self.force_timeout {
+            return Err(AdapterError::GraphEngineNonzeroExit {
+                message: "simulated timeout".to_string(),
+            });
+        }
+
         let command = args.join(" ");
-        let mut body = self.responses.get(&command).cloned().unwrap_or_else(|| {
-            // Default: simulate "no work available"
-            serde_json::json!({
-                "status": "failure",
-                "code": "NO_WORK_AVAILABLE",
-                "message": "No tasks available",
-            })
-            .to_string()
-        });
+        let mut body = self
+            .responses
+            .get(&command)
+            .cloned()
+            .unwrap_or_else(|| {
+                // Default: simulate "no work available"
+                serde_json::json!({
+                    "status": "failure",
+                    "code": "NO_WORK_AVAILABLE",
+                    "message": "No tasks available",
+                })
+                .to_string()
+            });
 
         if self.force_malformed {
             body = "{not json".to_string();
@@ -183,11 +284,29 @@ mod tests {
     }
 
     #[test]
-    fn real_runner_is_not_tested_without_binary() {
-        // RealRunner requires the agent-graph binary to exist.
-        // We create the struct without executing it in unit tests.
-        let runner = RealRunner::new("/nonexistent/bin".to_string());
-        // Just verify it compiles and has the trait.
+    fn mock_runner_simulates_timeout() {
+        let mut runner = MockRunner::new();
+        runner.set_force_timeout();
+        let result = runner.execute(&["next"]);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            crate::error::AdapterErrorCode::GRAPH_ENGINE_NONZERO_EXIT
+        );
+    }
+
+    #[test]
+    fn real_runner_config_default() {
+        let config = RealRunnerConfig::default();
+        assert_eq!(config.binary_path, "agent-graph");
+        assert_eq!(config.timeout, Some(Duration::from_secs(30)));
+        assert!(config.env.is_empty());
+        assert!(config.working_dir.is_none());
+    }
+
+    #[test]
+    fn real_runner_inherits_trait() {
+        let runner = RealRunner::new(RealRunnerConfig::default());
         let _: &dyn GraphRunner = &runner;
     }
 }

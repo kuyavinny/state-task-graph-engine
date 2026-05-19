@@ -14,15 +14,12 @@ use crate::graph_types::{
 /// [`MockRunner`]: crate::graph_runner::MockRunner
 pub struct GraphEngineClient {
     runner: Box<dyn GraphRunner>,
-    /// Working directory passed to the graph engine subprocess.
-    /// When `None`, the subprocess inherits the current directory.
-    working_dir: Option<String>,
 }
 
 impl GraphEngineClient {
     /// Create a new client with the given runner implementation.
-    pub fn new(runner: Box<dyn GraphRunner>, working_dir: Option<String>) -> Self {
-        Self { runner, working_dir }
+    pub fn new(runner: Box<dyn GraphRunner>) -> Self {
+        Self { runner }
     }
 
     /// Call `graph-engine next` and return the next available task.
@@ -125,7 +122,7 @@ mod tests {
             r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"lease_expiration":"2026-01-01T00:00:00Z","dependencies":[]}}"#,
         );
 
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.next().unwrap();
         assert_eq!(result.status, "success");
         assert_eq!(result.data.task_id, Some("t1".to_string()));
@@ -135,7 +132,7 @@ mod tests {
     #[test]
     fn next_returns_no_work_available() {
         let runner = MockRunner::new(); // default: NO_WORK_AVAILABLE
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.next();
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -146,7 +143,7 @@ mod tests {
     fn next_handles_malformed_json() {
         let mut runner = MockRunner::new();
         runner.set_response("next", "{not json");
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.next();
         assert!(result.is_err());
         assert_eq!(
@@ -159,7 +156,7 @@ mod tests {
     fn next_propagates_crash() {
         let mut runner = MockRunner::new();
         runner.set_force_crash();
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.next();
         assert!(result.is_err());
         assert_eq!(
@@ -172,7 +169,7 @@ mod tests {
     fn next_normalizes_stale_revision() {
         let mut runner = MockRunner::new();
         runner.set_force_stale();
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.next();
         assert!(result.is_err());
         assert_eq!(
@@ -191,7 +188,7 @@ mod tests {
             r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"claude","graph_revision":8}}"#,
         );
 
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.claim("t1", "claude", 7).unwrap();
         assert_eq!(result.status, "success");
         assert!(result.data.claimed);
@@ -202,7 +199,7 @@ mod tests {
     fn claim_normalizes_stale_revision() {
         let mut runner = MockRunner::new();
         runner.set_force_stale();
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.claim("t1", "claude", 7);
         assert!(result.is_err());
         assert_eq!(
@@ -218,7 +215,7 @@ mod tests {
             "claim t1 claude --revision 7",
             r#"{"status":"failure","code":"ALREADY_CLAIMED","message":"Task t1 is already claimed"}"#,
         );
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.claim("t1", "claude", 7);
         assert!(result.is_err());
         assert_eq!(
@@ -237,7 +234,7 @@ mod tests {
             r#"{"status":"success","data":{"task_id":"t1","summary":"task summary","graph_revision":9,"dependencies":[],"recent_events":[]}}"#,
         );
 
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.summarize("t1").unwrap();
         assert_eq!(result.status, "success");
         assert_eq!(result.data.task_id, "t1");
@@ -248,7 +245,7 @@ mod tests {
     fn summarize_handles_malformed_json() {
         let mut runner = MockRunner::new();
         runner.set_response("summarize t1", "{bad");
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.summarize("t1");
         assert!(result.is_err());
         assert_eq!(
@@ -264,7 +261,7 @@ mod tests {
             "summarize t1",
             r#"{"status":"failure","code":"NOT_FOUND","message":"task t1 not found"}"#,
         );
-        let client = GraphEngineClient::new(Box::new(runner), None);
+        let client = GraphEngineClient::new(Box::new(runner));
         let result = client.summarize("t1");
         assert!(result.is_err());
         assert_eq!(
