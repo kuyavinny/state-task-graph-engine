@@ -8,8 +8,8 @@
 ## Build from Source
 
 ```bash
-git clone https://github.com/kuyavinny/state-task-graph-engine.git
-cd state-task-graph-engine
+git clone https://github.com/kuyavinny/agent-graph.git
+cd agent-graph
 cargo install --path .
 ```
 

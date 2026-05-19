@@ -8,7 +8,7 @@ use crate::validate;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "stg", about = "State & Task Graph Engine")]
+#[command(name = "stg", about = "agent-graph: task graph engine for agents")]
 #[command(version, about)]
 pub struct Cli {
     #[command(subcommand)]

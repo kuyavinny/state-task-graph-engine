@@ -1,6 +1,6 @@
 # Architecture
 
-Internal design of the State & Task Graph Engine. This document is for contributors, integrators, and anyone who needs to understand how the engine works under the hood.
+Internal design of agent-graph. This document is for contributors, integrators, and anyone who needs to understand how the engine works under the hood.
 
 ---
 

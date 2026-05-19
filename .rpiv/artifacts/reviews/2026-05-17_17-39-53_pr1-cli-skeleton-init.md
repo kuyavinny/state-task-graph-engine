@@ -2,7 +2,7 @@
 template_version: 2
 date: 2026-05-17T17:39:53-0800
 author: kuyavinny
-repository: state-task-graph-engine
+repository: agent-graph
 branch: feat/pr1-cli-skeleton-init
 commit: c93a1056
 review_type: pr

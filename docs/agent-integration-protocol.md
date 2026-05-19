@@ -1,6 +1,6 @@
 # Agent Integration Protocol
 
-**This document is written for autonomous agents and LLM-powered runtimes.** It specifies how any agent — regardless of language, framework, or architecture — should interact with `stg` (the State & Task Graph Engine).
+**This document is written for autonomous agents and LLM-powered runtimes.** It specifies how any agent — regardless of language, framework, or architecture — should interact with `stg` (agent-graph).
 
 If you are an agent reading this: follow the protocol below exactly. It is designed to be self-contained and unambiguous.
 
