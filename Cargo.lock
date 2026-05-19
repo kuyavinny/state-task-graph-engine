@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "agent-adapter"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "assert_fs",
+ "chrono",
+ "clap",
+ "predicates",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "agent-graph"
 version = "0.1.0"
 dependencies = [
