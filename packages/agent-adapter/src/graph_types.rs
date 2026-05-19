@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Typed graph engine success envelope with a generic payload.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphSuccessEnvelope<T> {
     pub status: String,
@@ -9,7 +9,7 @@ pub struct GraphSuccessEnvelope<T> {
 }
 
 /// Typed graph engine failure envelope.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphFailureEnvelope {
     pub status: String,
@@ -18,7 +18,7 @@ pub struct GraphFailureEnvelope {
 }
 
 /// Payload for the `graph-engine next` command.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphNextPayload {
     pub task_id: Option<String>,
@@ -32,7 +32,7 @@ pub struct GraphNextPayload {
 }
 
 /// Payload for the `graph-engine claim` command.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphClaimPayload {
     pub claimed: bool,
@@ -44,7 +44,7 @@ pub struct GraphClaimPayload {
 }
 
 /// Payload for the `graph-engine summarize` command.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphSummarizePayload {
     pub task_id: String,
@@ -57,7 +57,7 @@ pub struct GraphSummarizePayload {
 }
 
 /// Deserialize a raw JSON string into a typed graph success envelope.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 pub fn parse_graph_success<T: serde::de::DeserializeOwned>(
     raw: &str,
 ) -> Result<GraphSuccessEnvelope<T>, crate::error::AdapterError> {
@@ -67,17 +67,15 @@ pub fn parse_graph_success<T: serde::de::DeserializeOwned>(
 }
 
 /// Deserialize a raw JSON string into a typed graph failure envelope.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
-pub fn parse_graph_failure(
-    raw: &str,
-) -> Result<GraphFailureEnvelope, crate::error::AdapterError> {
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
+pub fn parse_graph_failure(raw: &str) -> Result<GraphFailureEnvelope, crate::error::AdapterError> {
     serde_json::from_str(raw).map_err(|e| crate::error::AdapterError::GraphEngineMalformedJson {
         message: format!("{}", e),
     })
 }
 
 /// Determine whether a raw JSON string represents a graph failure.
-#[allow(dead_code)] // Will be used by GraphEngineClient in next commit
+#[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 pub fn is_graph_failure(raw: &str) -> bool {
     // Try to parse as JSON and look for status == "failure"
     serde_json::from_str::<serde_json::Value>(raw)

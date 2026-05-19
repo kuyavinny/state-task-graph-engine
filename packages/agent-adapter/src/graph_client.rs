@@ -1,8 +1,12 @@
+// PR2: GraphEngineClient not yet wired to CLI; dead_code allowed until PR3 get-work command
+#![allow(dead_code)]
 use crate::error::AdapterError;
 use crate::graph_runner::GraphRunner;
 use crate::graph_types::{
-    parse_graph_failure, parse_graph_success, is_graph_failure, GraphClaimPayload, GraphFailureEnvelope, GraphNextPayload, GraphSuccessEnvelope, GraphSummarizePayload,
+    GraphClaimPayload, GraphFailureEnvelope, GraphNextPayload, GraphSuccessEnvelope,
+    GraphSummarizePayload, is_graph_failure, parse_graph_failure, parse_graph_success,
 };
+use crate::logger::AdapterLogger;
 
 /// High-level client that wraps a [`GraphRunner`] to provide typed methods
 /// for graph engine interactions: `next`, `claim`, `summarize`.
@@ -10,16 +14,33 @@ use crate::graph_types::{
 /// All calls go through the trait, so production code uses [`RealRunner`]
 /// and tests use [`MockRunner`].
 ///
+/// If a logger is provided, each command is logged as a structured JSONL entry.
+///
 /// [`RealRunner`]: crate::graph_runner::RealRunner
 /// [`MockRunner`]: crate::graph_runner::MockRunner
 pub struct GraphEngineClient {
     runner: Box<dyn GraphRunner>,
+    logger: Option<AdapterLogger>,
+    actor: String,
 }
 
 impl GraphEngineClient {
-    /// Create a new client with the given runner implementation.
+    /// Create a new client with the given runner implementation and no logging.
     pub fn new(runner: Box<dyn GraphRunner>) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            logger: None,
+            actor: String::new(),
+        }
+    }
+
+    /// Create a new client with runner, logger, and actor identity.
+    pub fn with_logger(runner: Box<dyn GraphRunner>, logger: AdapterLogger, actor: &str) -> Self {
+        Self {
+            runner,
+            logger: Some(logger),
+            actor: actor.to_string(),
+        }
     }
 
     /// Call `graph-engine next` and return the next available task.
@@ -32,10 +53,13 @@ impl GraphEngineClient {
 
         if is_graph_failure(&raw) {
             let failure = parse_graph_failure(&raw)?;
-            return Err(self.normalize_failure(failure));
+            let err = self.normalize_failure(failure, "next");
+            self.log_failure("next", &err);
+            return Err(err);
         }
 
         let envelope: GraphSuccessEnvelope<GraphNextPayload> = parse_graph_success(&raw)?;
+        self.log_success("next");
         Ok(envelope)
     }
 
@@ -50,21 +74,18 @@ impl GraphEngineClient {
         actor: &str,
         revision: u64,
     ) -> Result<GraphSuccessEnvelope<GraphClaimPayload>, AdapterError> {
-        let args = [
-            "claim",
-            task_id,
-            actor,
-            "--revision",
-            &revision.to_string(),
-        ];
+        let args = ["claim", task_id, actor, "--revision", &revision.to_string()];
         let raw = self.runner.execute(&args)?;
 
         if is_graph_failure(&raw) {
             let failure = parse_graph_failure(&raw)?;
-            return Err(self.normalize_failure(failure));
+            let err = self.normalize_failure(failure, "claim");
+            self.log_failure("claim", &err);
+            return Err(err);
         }
 
         let envelope: GraphSuccessEnvelope<GraphClaimPayload> = parse_graph_success(&raw)?;
+        self.log_success("claim");
         Ok(envelope)
     }
 
@@ -81,27 +102,56 @@ impl GraphEngineClient {
 
         if is_graph_failure(&raw) {
             let failure = parse_graph_failure(&raw)?;
-            return Err(self.normalize_failure(failure));
+            let err = self.normalize_failure(failure, "summarize");
+            self.log_failure("summarize", &err);
+            return Err(err);
         }
 
         let envelope: GraphSuccessEnvelope<GraphSummarizePayload> = parse_graph_success(&raw)?;
+        self.log_success("summarize");
         Ok(envelope)
     }
 
-    /// Normalize a graph failure envelope into the appropriate adapter error.
+    /// Log a successful command if logger is present.
+    fn log_success(&self, command: &str) {
+        if let Some(ref logger) = self.logger {
+            let _ = logger.log_success(command, &self.actor);
+        }
+    }
+
+    /// Log a failed command if logger is present.
+    fn log_failure(&self, command: &str, err: &AdapterError) {
+        if let Some(ref logger) = self.logger {
+            let _ = logger.log_failure(
+                command,
+                &self.actor,
+                &format!("{:?}", err.error_code()),
+                &format!("{}", err),
+            );
+        }
+    }
+
+    /// Normalize a graph failure envelope into the appropriate adapter error,
+    /// given the command context that produced the failure.
     ///
     /// Maps known graph error codes to adapter-specific errors:
     /// - `NO_WORK_AVAILABLE` → `NoWorkAvailable`
     /// - `STALE_REVISION` → `ContextStaleRefetchRequired`
-    /// - Other codes → `ClaimFailed` (generic graph-side failure)
-    fn normalize_failure(&self, failure: GraphFailureEnvelope) -> AdapterError {
+    /// - Claim unknowns → `ClaimFailed`
+    /// - Next/Summarize unknowns → `Unknown { message }`
+    fn normalize_failure(&self, failure: GraphFailureEnvelope, command: &str) -> AdapterError {
         match failure.code.as_str() {
             "NO_WORK_AVAILABLE" => AdapterError::NoWorkAvailable,
             "STALE_REVISION" => AdapterError::ContextStaleRefetchRequired {
                 message: failure.message,
             },
-            _ => AdapterError::ClaimFailed {
-                message: format!("{}: {}", failure.code, failure.message),
+            _ => match command {
+                "claim" => AdapterError::ClaimFailed {
+                    message: format!("{}: {}", failure.code, failure.message),
+                },
+                _ => AdapterError::Unknown {
+                    message: format!("{}: {}", failure.code, failure.message),
+                },
             },
         }
     }
@@ -136,7 +186,10 @@ mod tests {
         let result = client.next();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.error_code(), crate::error::AdapterErrorCode::NO_WORK_AVAILABLE);
+        assert_eq!(
+            err.error_code(),
+            crate::error::AdapterErrorCode::NO_WORK_AVAILABLE
+        );
     }
 
     #[test]
@@ -255,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn summarize_propagates_graph_failure() {
+    fn summarize_maps_unknown_failure_to_unknown() {
         let mut runner = MockRunner::new();
         runner.set_response(
             "summarize t1",
@@ -266,7 +319,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().error_code(),
-            crate::error::AdapterErrorCode::CLAIM_FAILED
+            crate::error::AdapterErrorCode::UNKNOWN_ADAPTER_ERROR
         );
     }
 
@@ -318,5 +371,49 @@ mod tests {
         let client = GraphEngineClient::new(Box::new(runner));
         let result = client.claim("task-1_v2.0", "agent-name", 42);
         assert!(result.is_ok());
+    }
+
+    // --- Logging Integration Tests ---
+
+    #[test]
+    fn next_success_is_logged() {
+        use crate::logger::AdapterLogger;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let logger = AdapterLogger::new(dir.path().join("test_log.jsonl"));
+
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "next",
+            r#"{"status":"success","data":{"task_id":"t1","title":"T","description":"D","graph_revision":1,"dependencies":[]}}"#,
+        );
+
+        let client = GraphEngineClient::with_logger(Box::new(runner), logger, "test-actor");
+        let _ = client.next().unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("test_log.jsonl")).unwrap();
+        let entry: crate::logger::LogEntry = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(entry.command, "next");
+        assert_eq!(entry.actor, "test-actor");
+        assert!(entry.success);
+    }
+
+    #[test]
+    fn claim_failure_is_logged() {
+        use crate::logger::AdapterLogger;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let logger = AdapterLogger::new(dir.path().join("test_log.jsonl"));
+
+        let mut runner = MockRunner::new();
+        runner.set_force_stale();
+
+        let client = GraphEngineClient::with_logger(Box::new(runner), logger, "test-actor");
+        let _ = client.claim("t1", "agent", 1); // will fail with STALE_REVISION
+
+        let content = std::fs::read_to_string(dir.path().join("test_log.jsonl")).unwrap();
+        let entry: crate::logger::LogEntry = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(entry.command, "claim");
+        assert!(!entry.success);
+        assert!(entry.error_code.is_some());
+        assert!(entry.error_message.is_some());
     }
 }

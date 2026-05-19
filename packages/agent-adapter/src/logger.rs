@@ -1,5 +1,6 @@
-#[allow(unused_imports)]
-use chrono::{DateTime, Utc};
+// PR2: AdapterLogger not yet wired to CLI; dead_code allowed until PR3
+#![allow(dead_code)]
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -104,6 +105,7 @@ impl AdapterLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::DateTime;
 
     fn setup_temp_dir() -> tempfile::TempDir {
         tempfile::tempdir().expect("failed to create temp dir")
@@ -139,10 +141,7 @@ mod tests {
         assert_eq!(entry.command, "claim");
         assert!(!entry.success);
         assert_eq!(entry.error_code, Some("STALE_REVISION".to_string()));
-        assert_eq!(
-            entry.error_message,
-            Some("revision mismatch".to_string())
-        );
+        assert_eq!(entry.error_message, Some("revision mismatch".to_string()));
     }
 
     #[test]
@@ -150,7 +149,9 @@ mod tests {
         let dir = setup_temp_dir();
         let logger = AdapterLogger::new(dir.path().join("test_logs.jsonl"));
         logger.log_success("next", "agent-1").unwrap();
-        logger.log_failure("claim", "agent-1", "CLAIM_FAILED", "already claimed").unwrap();
+        logger
+            .log_failure("claim", "agent-1", "CLAIM_FAILED", "already claimed")
+            .unwrap();
         logger.log_success("summarize", "agent-1").unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("test_logs.jsonl")).unwrap();

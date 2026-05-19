@@ -1,3 +1,5 @@
+// PR2: RealRunner/RealRunnerConfig/MockRunner not yet wired to CLI; dead_code allowed until PR3
+#![allow(dead_code)]
 use crate::error::AdapterError;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -68,10 +70,7 @@ impl GraphRunner for RealRunner {
         }
 
         let start = Instant::now();
-        let timeout = self
-            .config
-            .timeout
-            .unwrap_or(Duration::from_secs(30));
+        let timeout = self.config.timeout.unwrap_or(Duration::from_secs(30));
 
         let mut child = cmd
             .stdout(std::process::Stdio::piped())
@@ -116,10 +115,7 @@ impl GraphRunner for RealRunner {
                     if start.elapsed() > timeout {
                         let _ = child.kill();
                         return Err(AdapterError::GraphEngineNonzeroExit {
-                            message: format!(
-                                "graph engine timed out after {}s",
-                                timeout.as_secs()
-                            ),
+                            message: format!("graph engine timed out after {}s", timeout.as_secs()),
                         });
                     }
                     std::thread::sleep(Duration::from_millis(10));
@@ -198,19 +194,15 @@ impl GraphRunner for MockRunner {
         }
 
         let command = args.join(" ");
-        let mut body = self
-            .responses
-            .get(&command)
-            .cloned()
-            .unwrap_or_else(|| {
-                // Default: simulate "no work available"
-                serde_json::json!({
-                    "status": "failure",
-                    "code": "NO_WORK_AVAILABLE",
-                    "message": "No tasks available",
-                })
-                .to_string()
-            });
+        let mut body = self.responses.get(&command).cloned().unwrap_or_else(|| {
+            // Default: simulate "no work available"
+            serde_json::json!({
+                "status": "failure",
+                "code": "NO_WORK_AVAILABLE",
+                "message": "No tasks available",
+            })
+            .to_string()
+        });
 
         if self.force_malformed {
             body = "{not json".to_string();
@@ -308,5 +300,57 @@ mod tests {
     fn real_runner_inherits_trait() {
         let runner = RealRunner::new(RealRunnerConfig::default());
         let _: &dyn GraphRunner = &runner;
+    }
+
+    /// RealRunner must pass arguments as-is without shell interpolation.
+    /// This test creates a temporary executable script that echoes its argv,
+    /// then calls it with arguments containing shell metacharacters.
+    /// If RealRunner used shell interpolation, the argument `task; echo pwned`
+    /// would be split by the shell, causing the exit code to be 0 (from the
+    /// echo) instead of the script's exit code, or the output would contain
+    /// "pwned" on a separate line.
+    #[cfg(unix)]
+    #[test]
+    fn real_runner_passes_args_without_shell_interpolation() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let script_path = dir.path().join("echo_args.sh");
+        let mut script = std::fs::File::create(&script_path).expect("create script");
+        writeln!(script, "#!/bin/sh").expect("write shebang");
+        writeln!(script, "echo \"$@\"").expect("write echo");
+        drop(script);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod");
+        }
+
+        let config = RealRunnerConfig {
+            binary_path: script_path.to_str().unwrap().to_string(),
+            timeout: Some(Duration::from_secs(5)),
+            env: HashMap::new(),
+            working_dir: None,
+        };
+        let runner = RealRunner::new(config);
+
+        // This argument contains shell metacharacters.
+        // If RealRunner used shell interpolation, the `; echo pwned` would
+        // be executed as a separate command and the output would contain "pwned".
+        let result = runner.execute(&["task; echo pwned"]);
+        assert!(result.is_ok(), "Expected OK, got: {:?}", result);
+        let output = result.unwrap();
+        // The output should contain the argument literally, not interpreted by shell
+        assert!(
+            output.contains("task; echo pwned"),
+            "Expected literal arg, got: {}",
+            output.trim()
+        );
+        assert!(
+            !output.contains("pwned\n") || output.contains("task; echo pwned"),
+            "Shell interpolation should not split args"
+        );
     }
 }

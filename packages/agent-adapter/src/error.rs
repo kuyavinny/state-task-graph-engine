@@ -295,24 +295,46 @@ mod tests {
     fn pr2_error_sources_and_retryability() {
         // PR2 error codes must have correct source and retryability
         assert_eq!(
-            AdapterError::GraphEngineNonzeroExit { message: "x".into() }.source_tag(),
+            AdapterError::GraphEngineNonzeroExit {
+                message: "x".into()
+            }
+            .source_tag(),
             ErrorSource::GraphEngine
         );
         assert_eq!(
-            AdapterError::GraphEngineMalformedJson { message: "x".into() }.source_tag(),
+            AdapterError::GraphEngineMalformedJson {
+                message: "x".into()
+            }
+            .source_tag(),
             ErrorSource::GraphEngine
         );
         assert_eq!(
-            AdapterError::ContextStaleRefetchRequired { message: "x".into() }.source_tag(),
+            AdapterError::ContextStaleRefetchRequired {
+                message: "x".into()
+            }
+            .source_tag(),
             ErrorSource::GraphEngine
         );
         // STALE_REVISION is NOT retryable — agent must REFETCH_WORK
-        assert!(!AdapterError::ContextStaleRefetchRequired { message: "x".into() }.retryable());
+        assert!(
+            !AdapterError::ContextStaleRefetchRequired {
+                message: "x".into()
+            }
+            .retryable()
+        );
         // GRAPH_ENGINE_NONZERO_EXIT IS retryable
-        assert!(AdapterError::GraphEngineNonzeroExit { message: "x".into() }.retryable());
+        assert!(
+            AdapterError::GraphEngineNonzeroExit {
+                message: "x".into()
+            }
+            .retryable()
+        );
         // ClaimFailed is Adapter-sourced
         assert_eq!(
-            AdapterError::ClaimFailed { message: "x".into() }.source_tag(),
+            AdapterError::ClaimFailed {
+                message: "x".into()
+            }
+            .source_tag(),
             ErrorSource::Adapter
         );
     }
