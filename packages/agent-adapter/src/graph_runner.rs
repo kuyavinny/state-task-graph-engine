@@ -303,12 +303,12 @@ mod tests {
     }
 
     /// RealRunner must pass arguments as-is without shell interpolation.
-    /// This test creates a temporary executable script that echoes its argv,
-    /// then calls it with arguments containing shell metacharacters.
-    /// If RealRunner used shell interpolation, the argument `task; echo pwned`
-    /// would be split by the shell, causing the exit code to be 0 (from the
-    /// echo) instead of the script's exit code, or the output would contain
-    /// "pwned" on a separate line.
+    /// Creates a temp script that echoes all arguments on one line, then
+    /// calls it with `task; exit 99` which contains shell metacharacters.
+    /// If RealRunner used shell interpolation, the `; exit 99` would
+    /// terminate the process with code 99 or `exit` would be a separate command.
+    /// Instead we assert: (1) execute() is Ok, (2) the output is exactly
+    /// the literal argument `task; exit 99`.
     #[cfg(unix)]
     #[test]
     fn real_runner_passes_args_without_shell_interpolation() {
@@ -318,7 +318,7 @@ mod tests {
         let script_path = dir.path().join("echo_args.sh");
         let mut script = std::fs::File::create(&script_path).expect("create script");
         writeln!(script, "#!/bin/sh").expect("write shebang");
-        writeln!(script, "echo \"$@\"").expect("write echo");
+        writeln!(script, "printf '%s' \"$*\"").expect("write printf");
         drop(script);
 
         #[cfg(unix)]
@@ -337,20 +337,10 @@ mod tests {
         let runner = RealRunner::new(config);
 
         // This argument contains shell metacharacters.
-        // If RealRunner used shell interpolation, the `; echo pwned` would
-        // be executed as a separate command and the output would contain "pwned".
-        let result = runner.execute(&["task; echo pwned"]);
+        // If RealRunner interpolated via shell, `; exit 99` would be a separate
+        // command causing a nonzero exit, or the output would be just "task".
+        let result = runner.execute(&["task; exit 99"]);
         assert!(result.is_ok(), "Expected OK, got: {:?}", result);
-        let output = result.unwrap();
-        // The output should contain the argument literally, not interpreted by shell
-        assert!(
-            output.contains("task; echo pwned"),
-            "Expected literal arg, got: {}",
-            output.trim()
-        );
-        assert!(
-            !output.contains("pwned\n") || output.contains("task; echo pwned"),
-            "Shell interpolation should not split args"
-        );
+        assert_eq!(result.unwrap().trim(), "task; exit 99");
     }
 }

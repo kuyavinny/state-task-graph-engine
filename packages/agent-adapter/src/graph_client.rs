@@ -49,18 +49,24 @@ impl GraphEngineClient {
     /// Returns `Err(AdapterError::NoWorkAvailable)` when the graph reports no tasks.
     /// Returns other errors for subprocess failures, malformed JSON, etc.
     pub fn next(&self) -> Result<GraphSuccessEnvelope<GraphNextPayload>, AdapterError> {
-        let raw = self.runner.execute(&["next"])?;
+        match self.runner.execute(&["next"]) {
+            Ok(raw) => {
+                if is_graph_failure(&raw) {
+                    let failure = parse_graph_failure(&raw)?;
+                    let err = self.normalize_failure(failure, "next");
+                    self.log_failure("next", &err);
+                    return Err(err);
+                }
 
-        if is_graph_failure(&raw) {
-            let failure = parse_graph_failure(&raw)?;
-            let err = self.normalize_failure(failure, "next");
-            self.log_failure("next", &err);
-            return Err(err);
+                let envelope: GraphSuccessEnvelope<GraphNextPayload> = parse_graph_success(&raw)?;
+                self.log_success("next");
+                Ok(envelope)
+            }
+            Err(e) => {
+                self.log_failure("next", &e);
+                Err(e)
+            }
         }
-
-        let envelope: GraphSuccessEnvelope<GraphNextPayload> = parse_graph_success(&raw)?;
-        self.log_success("next");
-        Ok(envelope)
     }
 
     /// Call `graph-engine claim <task_id> <actor> --revision <rev>` and return the result.
@@ -75,18 +81,24 @@ impl GraphEngineClient {
         revision: u64,
     ) -> Result<GraphSuccessEnvelope<GraphClaimPayload>, AdapterError> {
         let args = ["claim", task_id, actor, "--revision", &revision.to_string()];
-        let raw = self.runner.execute(&args)?;
+        match self.runner.execute(&args) {
+            Ok(raw) => {
+                if is_graph_failure(&raw) {
+                    let failure = parse_graph_failure(&raw)?;
+                    let err = self.normalize_failure(failure, "claim");
+                    self.log_failure("claim", &err);
+                    return Err(err);
+                }
 
-        if is_graph_failure(&raw) {
-            let failure = parse_graph_failure(&raw)?;
-            let err = self.normalize_failure(failure, "claim");
-            self.log_failure("claim", &err);
-            return Err(err);
+                let envelope: GraphSuccessEnvelope<GraphClaimPayload> = parse_graph_success(&raw)?;
+                self.log_success("claim");
+                Ok(envelope)
+            }
+            Err(e) => {
+                self.log_failure("claim", &e);
+                Err(e)
+            }
         }
-
-        let envelope: GraphSuccessEnvelope<GraphClaimPayload> = parse_graph_success(&raw)?;
-        self.log_success("claim");
-        Ok(envelope)
     }
 
     /// Call `graph-engine summarize <task_id>` and return the result.
@@ -98,18 +110,24 @@ impl GraphEngineClient {
         task_id: &str,
     ) -> Result<GraphSuccessEnvelope<GraphSummarizePayload>, AdapterError> {
         let args = ["summarize", task_id];
-        let raw = self.runner.execute(&args)?;
+        match self.runner.execute(&args) {
+            Ok(raw) => {
+                if is_graph_failure(&raw) {
+                    let failure = parse_graph_failure(&raw)?;
+                    let err = self.normalize_failure(failure, "summarize");
+                    self.log_failure("summarize", &err);
+                    return Err(err);
+                }
 
-        if is_graph_failure(&raw) {
-            let failure = parse_graph_failure(&raw)?;
-            let err = self.normalize_failure(failure, "summarize");
-            self.log_failure("summarize", &err);
-            return Err(err);
+                let envelope: GraphSuccessEnvelope<GraphSummarizePayload> = parse_graph_success(&raw)?;
+                self.log_success("summarize");
+                Ok(envelope)
+            }
+            Err(e) => {
+                self.log_failure("summarize", &e);
+                Err(e)
+            }
         }
-
-        let envelope: GraphSuccessEnvelope<GraphSummarizePayload> = parse_graph_success(&raw)?;
-        self.log_success("summarize");
-        Ok(envelope)
     }
 
     /// Log a successful command if logger is present.
@@ -149,7 +167,7 @@ impl GraphEngineClient {
                 "claim" => AdapterError::ClaimFailed {
                     message: format!("{}: {}", failure.code, failure.message),
                 },
-                _ => AdapterError::Unknown {
+                _ => AdapterError::GraphEngineFailure {
                     message: format!("{}: {}", failure.code, failure.message),
                 },
             },
@@ -308,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn summarize_maps_unknown_failure_to_unknown() {
+    fn summarize_maps_unknown_failure_to_graph_engine_failure() {
         let mut runner = MockRunner::new();
         runner.set_response(
             "summarize t1",
@@ -317,10 +335,12 @@ mod tests {
         let client = GraphEngineClient::new(Box::new(runner));
         let result = client.summarize("t1");
         assert!(result.is_err());
+        let err = result.unwrap_err();
         assert_eq!(
-            result.unwrap_err().error_code(),
-            crate::error::AdapterErrorCode::UNKNOWN_ADAPTER_ERROR
+            err.error_code(),
+            crate::error::AdapterErrorCode::GRAPH_ENGINE_FAILURE
         );
+        assert_eq!(err.source_tag(), crate::error::ErrorSource::GraphEngine);
     }
 
     // --- Strict File Boundary Tests ---
@@ -415,5 +435,46 @@ mod tests {
         assert!(!entry.success);
         assert!(entry.error_code.is_some());
         assert!(entry.error_message.is_some());
+    }
+
+    #[test]
+    fn crash_is_logged() {
+        use crate::logger::AdapterLogger;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let logger = AdapterLogger::new(dir.path().join("test_log.jsonl"));
+
+        let mut runner = MockRunner::new();
+        runner.set_force_crash();
+
+        let client = GraphEngineClient::with_logger(Box::new(runner), logger, "test-actor");
+        let _ = client.next(); // will fail with GRAPH_ENGINE_NONZERO_EXIT
+
+        let content = std::fs::read_to_string(dir.path().join("test_log.jsonl")).unwrap();
+        let entry: crate::logger::LogEntry = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(entry.command, "next");
+        assert!(!entry.success);
+        assert_eq!(entry.error_code.as_deref(), Some("GRAPH_ENGINE_NONZERO_EXIT"));
+    }
+
+    #[test]
+    fn malformed_json_crash_path_not_logged_yet() {
+        // When the graph engine returns malformed JSON that is NOT a failure
+        // envelope, parse_graph_success fails but this error path within
+        // the Ok(raw) branch is not yet logged. Known gap for PR3.
+        // This test verifies the error is still returned correctly.
+        use crate::logger::AdapterLogger;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let logger = AdapterLogger::new(dir.path().join("test_log.jsonl"));
+
+        let mut runner = MockRunner::new();
+        runner.set_response("next", "{not json");
+
+        let client = GraphEngineClient::with_logger(Box::new(runner), logger, "test-actor");
+        let result = client.next();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            crate::error::AdapterErrorCode::GRAPH_ENGINE_MALFORMED_JSON
+        );
     }
 }

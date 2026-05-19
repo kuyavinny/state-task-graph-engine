@@ -11,6 +11,7 @@ pub enum AdapterErrorCode {
     GRAPH_ENGINE_UNAVAILABLE,
     GRAPH_ENGINE_NONZERO_EXIT,
     GRAPH_ENGINE_MALFORMED_JSON,
+    GRAPH_ENGINE_FAILURE,
     CONTEXT_STALE_REFETCH_REQUIRED,
     CLAIM_FAILED,
     SUMMARIZE_FAILED_AFTER_CLAIM,
@@ -53,6 +54,9 @@ pub enum AdapterError {
 
     #[error("Graph engine returned malformed JSON: {message}")]
     GraphEngineMalformedJson { message: String },
+
+    #[error("Graph engine failure: {message}")]
+    GraphEngineFailure { message: String },
 
     #[error("Context stale: revision mismatch. {message}")]
     ContextStaleRefetchRequired { message: String },
@@ -129,6 +133,7 @@ impl AdapterError {
             AdapterError::GraphEngineMalformedJson { .. } => {
                 AdapterErrorCode::GRAPH_ENGINE_MALFORMED_JSON
             }
+            AdapterError::GraphEngineFailure { .. } => AdapterErrorCode::GRAPH_ENGINE_FAILURE,
             AdapterError::ContextStaleRefetchRequired { .. } => {
                 AdapterErrorCode::CONTEXT_STALE_REFETCH_REQUIRED
             }
@@ -155,6 +160,7 @@ impl AdapterError {
             AdapterError::GraphEngineUnavailable
             | AdapterError::GraphEngineNonzeroExit { .. }
             | AdapterError::GraphEngineMalformedJson { .. }
+            | AdapterError::GraphEngineFailure { .. }
             | AdapterError::ContextStaleRefetchRequired { .. } => ErrorSource::GraphEngine,
             _ => ErrorSource::Adapter,
         }
@@ -177,6 +183,7 @@ impl AdapterError {
             AdapterError::ContextStaleRefetchRequired { .. } => "REFETCH_WORK",
             AdapterError::GraphEngineUnavailable => "RETRY",
             AdapterError::GraphEngineNonzeroExit { .. } => "RETRY",
+            AdapterError::GraphEngineFailure { .. } => "INVESTIGATE",
             AdapterError::LeaseNotOwned => "RELEASE_AND_REFETCH",
             AdapterError::ProfileNotFound { .. } => "FIX_PROFILE_CONFIG",
             AdapterError::InvalidProfile { .. } => "FIX_PROFILE_CONFIG",
@@ -195,6 +202,7 @@ impl AdapterError {
             AdapterError::InvalidProfile { .. } => "Fix YAML syntax or schema errors",
             AdapterError::ProfilePermissionDenied { .. } => "Review profile permissions in config",
             AdapterError::GraphEngineUnavailable => "Ensure agent-graph binary is available",
+            AdapterError::GraphEngineFailure { .. } => "Check graph engine logs",
             AdapterError::ArtifactPolicyViolation { .. } => "Review artifact policy limits",
             _ => "Investigate adapter logs",
         }
@@ -211,6 +219,9 @@ impl AdapterError {
                 serde_json::json!({ "message": message })
             }
             AdapterError::GraphEngineMalformedJson { message } => {
+                serde_json::json!({ "message": message })
+            }
+            AdapterError::GraphEngineFailure { message } => {
                 serde_json::json!({ "message": message })
             }
             AdapterError::ClaimFailed { message } => serde_json::json!({ "message": message }),
