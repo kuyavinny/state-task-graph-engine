@@ -56,6 +56,15 @@ pub struct GraphSummarizePayload {
     pub recent_events: Vec<serde_json::Value>,
 }
 
+/// Payload for the `graph-engine release` command.
+#[allow(dead_code)] // PR2-3: used via GraphEngineClient, not yet wired to CLI
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GraphReleasePayload {
+    pub released: bool,
+    pub task_id: String,
+    pub graph_revision: u64,
+}
+
 /// Deserialize a raw JSON string into a typed graph success envelope.
 #[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 pub fn parse_graph_success<T: serde::de::DeserializeOwned>(
@@ -138,6 +147,15 @@ mod tests {
         assert!(p.claimed);
         assert_eq!(p.task_id, "t1");
         assert_eq!(p.graph_revision, 7);
+    }
+
+    #[test]
+    fn release_payload_fields() {
+        let raw = r#"{"released":true,"task_id":"t1","graph_revision":10}"#;
+        let p: GraphReleasePayload = serde_json::from_str(raw).unwrap();
+        assert!(p.released);
+        assert_eq!(p.task_id, "t1");
+        assert_eq!(p.graph_revision, 10);
     }
 
     #[test]

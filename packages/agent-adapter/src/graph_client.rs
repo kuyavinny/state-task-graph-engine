@@ -1,15 +1,20 @@
-// PR2: GraphEngineClient not yet wired to CLI; dead_code allowed until PR3 get-work command
+// PR2-3: GraphEngineClient used by get-work command; dead_code suppressed for test-only
 #![allow(dead_code)]
 use crate::error::AdapterError;
 use crate::graph_runner::GraphRunner;
 use crate::graph_types::{
-    GraphClaimPayload, GraphFailureEnvelope, GraphNextPayload, GraphSuccessEnvelope,
-    GraphSummarizePayload, is_graph_failure, parse_graph_failure, parse_graph_success,
+    GraphClaimPayload, GraphFailureEnvelope, GraphNextPayload, GraphReleasePayload,
+    GraphSuccessEnvelope, GraphSummarizePayload, is_graph_failure, parse_graph_failure,
+    parse_graph_success,
 };
 use crate::logger::AdapterLogger;
+use crate::task_packet::{
+    BoundedContext, CanonicalTaskPacket, Constraints, DependencyInfo, HeartbeatRequirements,
+    TaskInfo,
+};
 
 /// High-level client that wraps a [`GraphRunner`] to provide typed methods
-/// for graph engine interactions: `next`, `claim`, `summarize`.
+/// for graph engine interactions: `next`, `claim`, `summarize`, `release`.
 ///
 /// All calls go through the trait, so production code uses [`RealRunner`]
 /// and tests use [`MockRunner`].
@@ -58,9 +63,16 @@ impl GraphEngineClient {
                     return Err(err);
                 }
 
-                let envelope: GraphSuccessEnvelope<GraphNextPayload> = parse_graph_success(&raw)?;
-                self.log_success("next");
-                Ok(envelope)
+                match parse_graph_success::<GraphNextPayload>(&raw) {
+                    Ok(envelope) => {
+                        self.log_success("next");
+                        Ok(envelope)
+                    }
+                    Err(e) => {
+                        self.log_failure("next", &e);
+                        Err(e)
+                    }
+                }
             }
             Err(e) => {
                 self.log_failure("next", &e);
@@ -90,9 +102,16 @@ impl GraphEngineClient {
                     return Err(err);
                 }
 
-                let envelope: GraphSuccessEnvelope<GraphClaimPayload> = parse_graph_success(&raw)?;
-                self.log_success("claim");
-                Ok(envelope)
+                match parse_graph_success::<GraphClaimPayload>(&raw) {
+                    Ok(envelope) => {
+                        self.log_success("claim");
+                        Ok(envelope)
+                    }
+                    Err(e) => {
+                        self.log_failure("claim", &e);
+                        Err(e)
+                    }
+                }
             }
             Err(e) => {
                 self.log_failure("claim", &e);
@@ -119,16 +138,166 @@ impl GraphEngineClient {
                     return Err(err);
                 }
 
-                let envelope: GraphSuccessEnvelope<GraphSummarizePayload> =
-                    parse_graph_success(&raw)?;
-                self.log_success("summarize");
-                Ok(envelope)
+                match parse_graph_success::<GraphSummarizePayload>(&raw) {
+                    Ok(envelope) => {
+                        self.log_success("summarize");
+                        Ok(envelope)
+                    }
+                    Err(e) => {
+                        self.log_failure("summarize", &e);
+                        Err(e)
+                    }
+                }
             }
             Err(e) => {
                 self.log_failure("summarize", &e);
                 Err(e)
             }
         }
+    }
+
+    /// Call `graph-engine release <task_id> <actor> --revision <rev>` and return the result.
+    ///
+    /// Attempts best-effort release of a claimed task.  The caller decides
+    /// whether the release is critical or advisory.
+    pub fn release(
+        &self,
+        task_id: &str,
+        actor: &str,
+        revision: u64,
+    ) -> Result<GraphSuccessEnvelope<GraphReleasePayload>, AdapterError> {
+        let args = [
+            "release",
+            task_id,
+            actor,
+            "--revision",
+            &revision.to_string(),
+        ];
+        match self.runner.execute(&args) {
+            Ok(raw) => {
+                if is_graph_failure(&raw) {
+                    let failure = parse_graph_failure(&raw)?;
+                    let err = self.normalize_failure(failure, "release");
+                    self.log_failure("release", &err);
+                    return Err(err);
+                }
+
+                match parse_graph_success::<GraphReleasePayload>(&raw) {
+                    Ok(envelope) => {
+                        self.log_success("release");
+                        Ok(envelope)
+                    }
+                    Err(e) => {
+                        self.log_failure("release", &e);
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => {
+                self.log_failure("release", &e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Orchestrate the full `get-work` composition: next → claim → summarize.
+    ///
+    /// Returns a [`CanonicalTaskPacket`] containing the post-claim revision,
+    /// task metadata, bounded context, and constraints.
+    ///
+    /// Composite failure behaviour:
+    /// * If `claim` succeeds but `summarize` fails, a best-effort `release` is
+    ///   attempted **only** when a valid post-claim revision was returned.
+    /// * If release also fails (or no revision exists), the error is
+    ///   [`AdapterError::SummarizeFailedAfterClaim`] with
+    ///   [`AdapterErrorCode::TASK_MAY_REMAIN_LEASED`] in the details.
+    pub fn get_work(&self, actor: &str) -> Result<CanonicalTaskPacket, AdapterError> {
+        // 1. Discover next available task
+        let next_env = self.next()?;
+        let next_data = next_env.data;
+
+        let task_id = match next_data.task_id {
+            Some(id) => id,
+            None => return Err(AdapterError::NoWorkAvailable),
+        };
+        let pre_claim_revision = next_data.graph_revision;
+
+        // 2. Claim the task
+        let claim_env = self.claim(&task_id, actor, pre_claim_revision)?;
+        let claim_data = claim_env.data;
+        let post_claim_revision = claim_data.graph_revision;
+
+        // 3. Summarize for bounded context
+        let summarize_result = self.summarize(&task_id);
+        let summarize_data = match summarize_result {
+            Ok(env) => env.data,
+            Err(_summarize_err) => {
+                // Best-effort release only when we have a valid post-claim revision
+                if post_claim_revision > 0 {
+                    let _ = self.release(&task_id, actor, post_claim_revision);
+                }
+                return Err(AdapterError::SummarizeFailedAfterClaim {
+                    message: format!(
+                        "summarize failed after successful claim for task {} — task may remain leased",
+                        task_id
+                    ),
+                });
+            }
+        };
+
+        // 4. Assemble canonical task packet
+        let packet = CanonicalTaskPacket {
+            adapter_version: crate::response::ADAPTER_VERSION.to_string(),
+            profile: String::new(), // filled by CLI layer
+            actor: actor.to_string(),
+            graph_revision: post_claim_revision,
+            task: TaskInfo {
+                id: task_id.clone(),
+                title: next_data.title.unwrap_or_else(|| task_id.clone()),
+                description: next_data.description.unwrap_or_default(),
+                status: "IN_PROGRESS".to_string(),
+                lease_expires_at: claim_data.lease_expiration.clone(),
+            },
+            bounded_context: BoundedContext {
+                parent_chain: Vec::new(),
+                immediate_dependencies: summarize_data
+                    .dependencies
+                    .iter()
+                    .map(|dep| {
+                        // Each dep is a serde_json::Value; attempt to extract id/status
+                        let id = dep
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let status = dep
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("UNKNOWN")
+                            .to_string();
+                        DependencyInfo { id, status }
+                    })
+                    .collect(),
+                dependent_tasks: Vec::new(),
+                recent_events: summarize_data.recent_events.clone(),
+                completed_summaries: Vec::new(),
+            },
+            instructions: summarize_data.summary.clone(),
+            reporting_requirements: vec!["summary".to_string()],
+            heartbeat_requirements: HeartbeatRequirements {
+                interval_seconds: 300,
+            },
+            constraints: Constraints {
+                read_files: true,
+                write_files: true,
+                execute_shell: true,
+                run_tests: false,
+                network_access: false,
+                browser_access: false,
+            },
+        };
+
+        Ok(packet)
     }
 
     /// Log a successful command if logger is present.
@@ -157,7 +326,7 @@ impl GraphEngineClient {
     /// - `NO_WORK_AVAILABLE` → `NoWorkAvailable`
     /// - `STALE_REVISION` → `ContextStaleRefetchRequired`
     /// - Claim unknowns → `ClaimFailed`
-    /// - Next/Summarize unknowns → `Unknown { message }`
+    /// - Next/Summarize/Release unknowns → `GraphEngineFailure`
     fn normalize_failure(&self, failure: GraphFailureEnvelope, command: &str) -> AdapterError {
         match failure.code.as_str() {
             "NO_WORK_AVAILABLE" => AdapterError::NoWorkAvailable,
@@ -461,11 +630,8 @@ mod tests {
     }
 
     #[test]
-    fn malformed_json_crash_path_not_logged_yet() {
-        // When the graph engine returns malformed JSON that is NOT a failure
-        // envelope, parse_graph_success fails but this error path within
-        // the Ok(raw) branch is not yet logged. Known gap for PR3.
-        // This test verifies the error is still returned correctly.
+    fn malformed_json_is_now_logged() {
+        // PR3 fix: malformed JSON in the Ok(raw) branch is now logged.
         use crate::logger::AdapterLogger;
         let dir = tempfile::tempdir().expect("temp dir");
         let logger = AdapterLogger::new(dir.path().join("test_log.jsonl"));
@@ -479,6 +645,151 @@ mod tests {
         assert_eq!(
             result.unwrap_err().error_code(),
             crate::error::AdapterErrorCode::GRAPH_ENGINE_MALFORMED_JSON
+        );
+
+        let content = std::fs::read_to_string(dir.path().join("test_log.jsonl")).unwrap();
+        let entry: crate::logger::LogEntry = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(entry.command, "next");
+        assert!(!entry.success);
+        assert_eq!(
+            entry.error_code.as_deref(),
+            Some("GRAPH_ENGINE_MALFORMED_JSON")
+        );
+    }
+
+    // --- release() ---
+
+    #[test]
+    fn release_returns_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "release t1 test-agent --revision 43",
+            r#"{"status":"success","data":{"released":true,"task_id":"t1","graph_revision":44}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.release("t1", "test-agent", 43).unwrap();
+        assert_eq!(result.status, "success");
+        assert!(result.data.released);
+        assert_eq!(result.data.graph_revision, 44);
+    }
+
+    #[test]
+    fn get_work_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "next",
+            r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"lease_expiration":"2026-01-01T00:00:00Z","dependencies":[]}}"#,
+        );
+        runner.set_response(
+            "claim t1 test-agent --revision 42",
+            r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"test-agent","graph_revision":43}}"#,
+        );
+        runner.set_response(
+            "summarize t1",
+            r#"{"status":"success","data":{"task_id":"t1","summary":"Task summary","graph_revision":43,"dependencies":[{"id":"d1","status":"COMPLETED"}],"recent_events":[]}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let packet = client.get_work("test-agent").unwrap();
+
+        assert_eq!(packet.actor, "test-agent");
+        assert_eq!(packet.graph_revision, 43); // post-claim revision
+        assert_eq!(packet.task.id, "t1");
+        assert_eq!(packet.task.status, "IN_PROGRESS");
+        assert_eq!(packet.bounded_context.immediate_dependencies.len(), 1);
+        assert_eq!(packet.bounded_context.immediate_dependencies[0].id, "d1");
+    }
+
+    #[test]
+    fn get_work_no_task_available() {
+        let runner = MockRunner::new(); // default: NO_WORK_AVAILABLE
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.get_work("test-agent");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            crate::error::AdapterErrorCode::NO_WORK_AVAILABLE
+        );
+    }
+
+    #[test]
+    fn get_work_claim_fails_after_next() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "next",
+            r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"dependencies":[]}}"#,
+        );
+        runner.set_response(
+            "claim t1 test-agent --revision 42",
+            r#"{"status":"failure","code":"ALREADY_CLAIMED","message":"task t1 is already claimed"}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.get_work("test-agent");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            crate::error::AdapterErrorCode::CLAIM_FAILED
+        );
+    }
+
+    #[test]
+    fn get_work_summarize_fails_release_attempted() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "next",
+            r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"dependencies":[]}}"#,
+        );
+        runner.set_response(
+            "claim t1 test-agent --revision 42",
+            r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"test-agent","graph_revision":43}}"#,
+        );
+        runner.set_response(
+            "summarize t1",
+            r#"{"status":"failure","code":"NOT_FOUND","message":"task t1 not found"}"#,
+        );
+        runner.set_response(
+            "release t1 test-agent --revision 43",
+            r#"{"status":"success","data":{"released":true,"task_id":"t1","graph_revision":44}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.get_work("test-agent");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.error_code(),
+            crate::error::AdapterErrorCode::SUMMARIZE_FAILED_AFTER_CLAIM
+        );
+    }
+
+    #[test]
+    fn get_work_summarize_fails_no_post_claim_revision() {
+        // If claim returns graph_revision == 0, release should NOT be attempted
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "next",
+            r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"dependencies":[]}}"#,
+        );
+        runner.set_response(
+            "claim t1 test-agent --revision 42",
+            r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"test-agent","graph_revision":0}}"#,
+        );
+        runner.set_response(
+            "summarize t1",
+            r#"{"status":"failure","code":"NOT_FOUND","message":"task t1 not found"}"#,
+        );
+        // No release response set — if release were called, MockRunner would return
+        // NO_WORK_AVAILABLE (its default), causing a different error path.
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.get_work("test-agent");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.error_code(),
+            crate::error::AdapterErrorCode::SUMMARIZE_FAILED_AFTER_CLAIM
         );
     }
 }

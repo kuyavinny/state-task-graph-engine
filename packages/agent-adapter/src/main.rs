@@ -6,6 +6,7 @@ mod graph_runner;
 mod graph_types;
 mod logger;
 mod response;
+mod task_packet;
 
 use clap::Parser;
 use cli::Cli;
