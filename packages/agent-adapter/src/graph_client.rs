@@ -236,7 +236,12 @@ impl GraphEngineClient {
                 if post_claim_revision > 0 {
                     let _ = self.release(&task_id, actor, post_claim_revision);
                 }
-                return Err(AdapterError::SummarizeFailedAfterClaim);
+                return Err(AdapterError::SummarizeFailedAfterClaim {
+                    message: format!(
+                        "summarize failed after successful claim for task {} — task may remain leased",
+                        task_id
+                    ),
+                });
             }
         };
 
@@ -248,7 +253,7 @@ impl GraphEngineClient {
             graph_revision: post_claim_revision,
             task: TaskInfo {
                 id: task_id.clone(),
-                title: claim_data.task_id.clone(), // fallback; real title from next_data if available
+                title: next_data.title.unwrap_or_else(|| task_id.clone()),
                 description: next_data.description.unwrap_or_default(),
                 status: "IN_PROGRESS".to_string(),
                 lease_expires_at: claim_data.lease_expiration.clone(),

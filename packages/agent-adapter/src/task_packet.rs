@@ -23,8 +23,11 @@ pub struct CanonicalTaskPacket {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TaskInfo {
     pub id: String,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub status: String,
     #[serde(default)]
     pub lease_expires_at: Option<String>,
@@ -55,6 +58,7 @@ pub struct DependencyInfo {
 /// Heartbeat policy for the claimed task.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HeartbeatRequirements {
+    #[serde(default)]
     pub interval_seconds: u64,
 }
 

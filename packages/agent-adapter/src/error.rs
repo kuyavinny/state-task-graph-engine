@@ -64,8 +64,8 @@ pub enum AdapterError {
     #[error("Claim failed: {message}")]
     ClaimFailed { message: String },
 
-    #[error("Summarize failed after claim")]
-    SummarizeFailedAfterClaim,
+    #[error("Summarize failed after claim: {message}")]
+    SummarizeFailedAfterClaim { message: String },
 
     #[error("Invalid result packet: {message}")]
     InvalidResultPacket { message: String },
@@ -138,7 +138,7 @@ impl AdapterError {
                 AdapterErrorCode::CONTEXT_STALE_REFETCH_REQUIRED
             }
             AdapterError::ClaimFailed { .. } => AdapterErrorCode::CLAIM_FAILED,
-            AdapterError::SummarizeFailedAfterClaim => {
+            AdapterError::SummarizeFailedAfterClaim { .. } => {
                 AdapterErrorCode::SUMMARIZE_FAILED_AFTER_CLAIM
             }
             AdapterError::InvalidResultPacket { .. } => AdapterErrorCode::INVALID_RESULT_PACKET,
@@ -236,6 +236,9 @@ impl AdapterError {
             }
             AdapterError::InvalidProfile { message } => serde_json::json!({ "message": message }),
             AdapterError::Unknown { message } => serde_json::json!({ "message": message }),
+            AdapterError::SummarizeFailedAfterClaim { message } => {
+                serde_json::json!({ "message": message, "code": "TASK_MAY_REMAIN_LEASED" })
+            }
             _ => serde_json::Value::Object(serde_json::Map::new()),
         }
     }
