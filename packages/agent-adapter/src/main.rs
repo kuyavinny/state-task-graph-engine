@@ -1,6 +1,8 @@
 mod cli;
 mod config;
 mod error;
+mod graph_runner;
+mod graph_types;
 mod response;
 
 use clap::Parser;
