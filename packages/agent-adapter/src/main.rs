@@ -4,6 +4,7 @@ mod error;
 mod graph_client;
 mod graph_runner;
 mod graph_types;
+mod logger;
 mod response;
 
 use clap::Parser;
