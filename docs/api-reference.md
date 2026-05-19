@@ -46,7 +46,7 @@ Every command returns a JSON envelope on stdout:
 
 ### `stg init`
 
-Initialize a new project. Creates `.agent/` directory with an empty graph and event log.
+Initialize a new project. Creates `.agent/` directory with an empty graph and event log containing an `init` event.
 
 **Arguments:** None
 
@@ -189,7 +189,7 @@ Lock a task with a lease. Transitions READY → IN_PROGRESS.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID to claim |
-| `--actor` | positional | yes | Worker claiming the task |
+| `--actor` | flag | yes | Worker claiming the task |
 | `--ttl-seconds` | flag | yes | Lease duration in seconds |
 
 **Output:**
@@ -232,7 +232,7 @@ Extend an active lease. No state transition.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Must match current lease owner |
+| `--actor` | flag | yes | Must match current lease owner |
 | `--ttl-seconds` | flag | yes | Additional seconds to extend lease |
 
 **Output:**
@@ -271,7 +271,7 @@ Release a claimed task back to READY. Transitions IN_PROGRESS → READY.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Must match current lease owner |
+| `--actor` | flag | yes | Must match current lease owner |
 
 **Output:**
 
@@ -306,7 +306,7 @@ Mark a task as completed. Transitions IN_PROGRESS → COMPLETED.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Must match current lease owner |
+| `--actor` | flag | yes | Must match current lease owner |
 | `--revision` | flag | yes | Current graph revision |
 | `--result-summary` | flag | yes | Brief outcome description |
 
@@ -345,7 +345,7 @@ Mark a task as failed. Transitions IN_PROGRESS → FAILED.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Must match current lease owner |
+| `--actor` | flag | yes | Must match current lease owner |
 | `--revision` | flag | yes | Current graph revision |
 | `--failure-reason` | flag | yes | Description of why it failed |
 
@@ -375,7 +375,7 @@ Mark a task as blocked. Transitions IN_PROGRESS → BLOCKED.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Must match current lease owner |
+| `--actor` | flag | yes | Must match current lease owner |
 | `--revision` | flag | yes | Current graph revision |
 | `--blocked-reason` | flag | yes | Description of what's blocking |
 
@@ -405,7 +405,7 @@ Intentionally bypass a task. Transitions IN_PROGRESS → SKIPPED.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Must match current lease owner |
+| `--actor` | flag | yes | Must match current lease owner |
 | `--revision` | flag | yes | Current graph revision |
 | `--skip-reason` | flag | yes | Why the task is being skipped |
 
@@ -437,7 +437,7 @@ Cancel a task from any state. Transitions Any → CANCELLED.
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Actor cancelling |
+| `--actor` | flag | yes | Actor cancelling |
 | `--revision` | flag | yes | Current graph revision |
 | `--cancel-reason` | flag | yes | Reason for cancellation |
 
@@ -469,7 +469,7 @@ Reset a terminal state back to PENDING or READY. Transitions COMPLETED/FAILED/BL
 | Arg | Type | Required | Description |
 |-----|------|----------|-------------|
 | `node_id` | positional | yes | Task ID |
-| `--actor` | positional | yes | Actor reopening |
+| `--actor` | flag | yes | Actor reopening |
 | `--revision` | flag | yes | Current graph revision |
 
 **Output:**

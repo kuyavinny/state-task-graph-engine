@@ -3,7 +3,7 @@ use assert_fs::TempDir;
 use predicates::prelude::*;
 
 fn stg() -> Command {
-    Command::cargo_bin("state-task-graph-engine").unwrap()
+    Command::cargo_bin("stg").unwrap()
 }
 
 fn init_project(tmp: &TempDir) {

@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 
 fn stg() -> Command {
-    Command::cargo_bin("state-task-graph-engine").unwrap()
+    Command::cargo_bin("stg").unwrap()
 }
 
 fn init_project(dir: &assert_fs::TempDir) {
@@ -830,7 +830,14 @@ nodes:
 
     // Claim the task
     let claim_out = stg()
-        .args(["claim", "task-a", "worker-1", "--ttl-seconds", "300"])
+        .args([
+            "claim",
+            "--actor",
+            "worker-1",
+            "--ttl-seconds",
+            "300",
+            "task-a",
+        ])
         .current_dir(tmp.path())
         .assert()
         .success()
@@ -846,12 +853,13 @@ nodes:
     let comp_out = stg()
         .args([
             "complete",
-            "task-a",
+            "--actor",
             "worker-1",
             "--revision",
             &rev.to_string(),
             "--result-summary",
             "Done",
+            "task-a",
         ])
         .current_dir(tmp.path())
         .assert()
@@ -910,7 +918,14 @@ nodes:
 
     // Claim by worker-1
     let claim_out = stg()
-        .args(["claim", "task-a", "worker-1", "--ttl-seconds", "300"])
+        .args([
+            "claim",
+            "--actor",
+            "worker-1",
+            "--ttl-seconds",
+            "300",
+            "task-a",
+        ])
         .current_dir(tmp.path())
         .assert()
         .success()
@@ -924,12 +939,13 @@ nodes:
     stg()
         .args([
             "complete",
-            "task-a",
+            "--actor",
             "worker-2",
             "--revision",
             &rev.to_string(),
             "--result-summary",
             "Stolen",
+            "task-a",
         ])
         .current_dir(tmp.path())
         .assert()
@@ -973,12 +989,13 @@ nodes:
     let out = stg()
         .args([
             "skip",
-            "task-a",
+            "--actor",
             "worker-1",
             "--revision",
             "0",
             "--skip-reason",
             "Not needed",
+            "task-a",
         ])
         .current_dir(tmp.path())
         .assert()
@@ -1045,7 +1062,14 @@ nodes:
 
     // Claim should fail with dependency info in error message
     stg()
-        .args(["claim", "task-a", "worker-1", "--ttl-seconds", "300"])
+        .args([
+            "claim",
+            "--actor",
+            "worker-1",
+            "--ttl-seconds",
+            "300",
+            "task-a",
+        ])
         .current_dir(tmp.path())
         .assert()
         .failure()
@@ -1600,7 +1624,7 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
 
     // 4. claim
     stg()
-        .args(["claim", "a", "worker-1", "--ttl-seconds", "300"])
+        .args(["claim", "--actor", "worker-1", "--ttl-seconds", "300", "a"])
         .current_dir(tmp.path())
         .assert()
         .success();
@@ -1619,12 +1643,13 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
     stg()
         .args([
             "complete",
-            "a",
+            "--actor",
             "worker-1",
             "--revision",
             &revision.to_string(),
             "--result-summary",
             "Task A done",
+            "a",
         ])
         .current_dir(tmp.path())
         .assert()

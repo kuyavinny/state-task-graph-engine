@@ -1953,8 +1953,8 @@ mod tests {
         let content = std::fs::read_to_string(&events_path).unwrap();
         let event_count = content.lines().filter(|l| !l.is_empty()).count();
         assert_eq!(
-            event_count, 2,
-            "Expected exactly 2 events (1 preflight + 1 claim), got {}: {:?}",
+            event_count, 3,
+            "Expected exactly 3 events (1 init + 1 preflight + 1 claim), got {}: {:?}",
             event_count, content
         );
     }

@@ -30,6 +30,7 @@ pub enum Commands {
         /// Node ID to claim
         node_id: String,
         /// Actor claiming the task
+        #[arg(long)]
         actor: String,
         /// Lease time-to-live in seconds
         #[arg(long)]
@@ -40,6 +41,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor extending the lease
+        #[arg(long)]
         actor: String,
         /// Additional TTL in seconds
         #[arg(long)]
@@ -50,6 +52,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor releasing the task
+        #[arg(long)]
         actor: String,
     },
     /// Mark an active task as completed
@@ -57,6 +60,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor completing the task
+        #[arg(long)]
         actor: String,
         /// Current graph revision for optimistic concurrency
         #[arg(long)]
@@ -70,6 +74,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor reporting failure
+        #[arg(long)]
         actor: String,
         /// Current graph revision for optimistic concurrency
         #[arg(long)]
@@ -83,6 +88,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor blocking the task
+        #[arg(long)]
         actor: String,
         /// Current graph revision for optimistic concurrency
         #[arg(long)]
@@ -96,6 +102,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor skipping the task
+        #[arg(long)]
         actor: String,
         /// Current graph revision for optimistic concurrency
         #[arg(long)]
@@ -109,6 +116,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor cancelling the task
+        #[arg(long)]
         actor: String,
         /// Current graph revision for optimistic concurrency
         #[arg(long)]
@@ -122,6 +130,7 @@ pub enum Commands {
         /// Node ID
         node_id: String,
         /// Actor reopening the task
+        #[arg(long)]
         actor: String,
         /// Current graph revision for optimistic concurrency
         #[arg(long)]
