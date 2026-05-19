@@ -119,7 +119,8 @@ impl GraphEngineClient {
                     return Err(err);
                 }
 
-                let envelope: GraphSuccessEnvelope<GraphSummarizePayload> = parse_graph_success(&raw)?;
+                let envelope: GraphSuccessEnvelope<GraphSummarizePayload> =
+                    parse_graph_success(&raw)?;
                 self.log_success("summarize");
                 Ok(envelope)
             }
@@ -453,7 +454,10 @@ mod tests {
         let entry: crate::logger::LogEntry = serde_json::from_str(content.trim()).unwrap();
         assert_eq!(entry.command, "next");
         assert!(!entry.success);
-        assert_eq!(entry.error_code.as_deref(), Some("GRAPH_ENGINE_NONZERO_EXIT"));
+        assert_eq!(
+            entry.error_code.as_deref(),
+            Some("GRAPH_ENGINE_NONZERO_EXIT")
+        );
     }
 
     #[test]
