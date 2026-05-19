@@ -2,12 +2,16 @@ use assert_cmd::Command;
 use assert_fs::TempDir;
 use predicates::prelude::*;
 
-fn stg() -> Command {
-    Command::cargo_bin("stg").unwrap()
+fn stage() -> Command {
+    Command::cargo_bin("stage").unwrap()
 }
 
 fn init_project(tmp: &TempDir) {
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 }
 
 fn write_graph(tmp: &TempDir, yaml: &str) {
@@ -49,7 +53,7 @@ nodes:
 fn validate_empty_graph_passes() {
     let tmp = TempDir::new().unwrap();
     init_project(&tmp);
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -62,7 +66,7 @@ fn validate_valid_dag_passes() {
     let tmp = TempDir::new().unwrap();
     init_project(&tmp);
     write_graph(&tmp, valid_graph_yaml());
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -126,7 +130,7 @@ nodes:
     let tmp = TempDir::new().unwrap();
     init_project(&tmp);
     write_graph(&tmp, yaml);
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -167,7 +171,7 @@ nodes:
     let tmp = TempDir::new().unwrap();
     init_project(&tmp);
     write_graph(&tmp, yaml);
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -231,7 +235,7 @@ nodes:
     let tmp = TempDir::new().unwrap();
     init_project(&tmp);
     write_graph(&tmp, yaml);
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -249,7 +253,7 @@ fn validate_invalid_yaml_returns_structured_error() {
         "{{not valid yaml",
     )
     .unwrap();
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -290,7 +294,7 @@ nodes:
     let tmp = TempDir::new().unwrap();
     init_project(&tmp);
     write_graph(&tmp, yaml);
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -331,7 +335,7 @@ nodes:
     let tmp = TempDir::new().unwrap();
     init_project(&tmp);
     write_graph(&tmp, yaml);
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -397,7 +401,7 @@ nodes:
     init_project(&tmp);
     write_graph(&tmp, yaml);
 
-    let output = stg()
+    let output = stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()

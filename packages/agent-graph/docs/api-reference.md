@@ -1,6 +1,6 @@
 # API Reference
 
-Complete reference for all 16 `stg` commands, including arguments, output format, and error cases.
+Complete reference for all 16 `stage` commands, including arguments, output format, and error cases.
 
 ---
 
@@ -44,7 +44,7 @@ Every command returns a JSON envelope on stdout:
 
 ## Initialization & Inspection
 
-### `stg init`
+### `stage init`
 
 Initialize a new project. Creates `.agent/` directory with an empty graph and event log containing an `init` event.
 
@@ -71,7 +71,7 @@ Initialize a new project. Creates `.agent/` directory with an empty graph and ev
 
 ---
 
-### `stg status`
+### `stage status`
 
 Return the high-level progress of the graph. This is the primary way to get the current `graph_revision` for mutation commands.
 
@@ -102,12 +102,12 @@ Return the high-level progress of the graph. This is the primary way to get the 
 
 | Code | Condition |
 |------|-----------|
-| `FILE_NOT_FOUND` | `.agent/` directory doesn't exist (run `stg init`) |
+| `FILE_NOT_FOUND` | `.agent/` directory doesn't exist (run `stage init`) |
 | `SERIALIZATION_ERROR` | Graph or event log file is corrupt |
 
 ---
 
-### `stg next`
+### `stage next`
 
 Return the highest-priority READY task. Returns `null` data.id if no tasks are available.
 
@@ -148,7 +148,7 @@ Return the highest-priority READY task. Returns `null` data.id if no tasks are a
 
 ---
 
-### `stg validate`
+### `stage validate`
 
 Run all validation checks on the current graph.
 
@@ -180,7 +180,7 @@ Run all validation checks on the current graph.
 
 All mutation commands that change task state require `--revision` for optimistic concurrency, and `--actor` to identify the worker.
 
-### `stg claim`
+### `stage claim`
 
 Lock a task with a lease. Transitions READY → IN_PROGRESS.
 
@@ -223,7 +223,7 @@ Lock a task with a lease. Transitions READY → IN_PROGRESS.
 
 ---
 
-### `stg heartbeat`
+### `stage heartbeat`
 
 Extend an active lease. No state transition.
 
@@ -262,7 +262,7 @@ Extend an active lease. No state transition.
 
 ---
 
-### `stg release`
+### `stage release`
 
 Release a claimed task back to READY. Transitions IN_PROGRESS → READY.
 
@@ -297,7 +297,7 @@ Release a claimed task back to READY. Transitions IN_PROGRESS → READY.
 
 ---
 
-### `stg complete`
+### `stage complete`
 
 Mark a task as completed. Transitions IN_PROGRESS → COMPLETED.
 
@@ -336,7 +336,7 @@ Mark a task as completed. Transitions IN_PROGRESS → COMPLETED.
 
 ---
 
-### `stg fail`
+### `stage fail`
 
 Mark a task as failed. Transitions IN_PROGRESS → FAILED.
 
@@ -366,7 +366,7 @@ Mark a task as failed. Transitions IN_PROGRESS → FAILED.
 
 ---
 
-### `stg block`
+### `stage block`
 
 Mark a task as blocked. Transitions IN_PROGRESS → BLOCKED.
 
@@ -396,7 +396,7 @@ Mark a task as blocked. Transitions IN_PROGRESS → BLOCKED.
 
 ---
 
-### `stg skip`
+### `stage skip`
 
 Intentionally bypass a task. Transitions IN_PROGRESS → SKIPPED.
 
@@ -428,7 +428,7 @@ Intentionally bypass a task. Transitions IN_PROGRESS → SKIPPED.
 
 ---
 
-### `stg cancel`
+### `stage cancel`
 
 Cancel a task from any state. Transitions Any → CANCELLED.
 
@@ -460,7 +460,7 @@ Cancel a task from any state. Transitions Any → CANCELLED.
 
 ---
 
-### `stg reopen`
+### `stage reopen`
 
 Reset a terminal state back to PENDING or READY. Transitions COMPLETED/FAILED/BLOCKED/SKIPPED/CANCELLED → PENDING/READY.
 
@@ -495,7 +495,7 @@ Reset a terminal state back to PENDING or READY. Transitions COMPLETED/FAILED/BL
 
 ## Graph Management
 
-### `stg append-nodes`
+### `stage append-nodes`
 
 Add new tasks from a YAML file. Requires the current graph revision.
 
@@ -536,7 +536,7 @@ Add new tasks from a YAML file. Requires the current graph revision.
 
 ---
 
-### `stg summarize`
+### `stage summarize`
 
 Generate a bounded context payload for a specific task. Designed for LLM integration.
 
