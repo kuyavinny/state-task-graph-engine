@@ -1,3 +1,4 @@
+use crate::error::AdapterError;
 use serde::{Deserialize, Serialize};
 
 /// Top-level adapter configuration loaded from `.agent/adapter.config.yaml`.
@@ -154,9 +155,76 @@ pub fn default_config() -> AdapterConfig {
     }
 }
 
+impl AdapterConfig {
+    /// Validate the adapter configuration for semantic correctness.
+    /// Returns the first error encountered, or Ok(()) if valid.
+    pub fn validate(&self) -> Result<(), AdapterError> {
+        // Schema version must be present
+        if self.schema_version.is_empty() {
+            return Err(AdapterError::InvalidProfile {
+                message: "schema_version cannot be empty".to_string(),
+            });
+        }
+
+        // Graph engine binary path must be present
+        if self.graph_engine_binary_path.is_empty() {
+            return Err(AdapterError::InvalidProfile {
+                message: "graph_engine_binary_path cannot be empty".to_string(),
+            });
+        }
+
+        // Default profile must be non-empty
+        if self.default_profile.is_empty() {
+            return Err(AdapterError::InvalidProfile {
+                message: "default_profile cannot be empty".to_string(),
+            });
+        }
+
+        // Must have at least one profile
+        if self.profiles.is_empty() {
+            return Err(AdapterError::InvalidProfile {
+                message: "profiles list cannot be empty".to_string(),
+            });
+        }
+
+        // Validate each profile
+        for profile in &self.profiles {
+            if profile.name.is_empty() {
+                return Err(AdapterError::InvalidProfile {
+                    message: "Profile name cannot be empty".to_string(),
+                });
+            }
+            if profile.agent_identity.runtime.is_empty() {
+                return Err(AdapterError::InvalidProfile {
+                    message: format!("Profile '{}' has empty runtime", profile.name),
+                });
+            }
+            if profile.agent_identity.version.is_empty() {
+                return Err(AdapterError::InvalidProfile {
+                    message: format!("Profile '{}' has empty version", profile.name),
+                });
+            }
+        }
+
+        // Default profile must reference an existing profile
+        let default_exists = self.profiles.iter().any(|p| p.name == self.default_profile);
+        if !default_exists {
+            return Err(AdapterError::InvalidProfile {
+                message: format!(
+                    "Default profile '{}' not found in profiles list",
+                    self.default_profile
+                ),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AdapterErrorCode;
 
     #[test]
     fn default_config_has_two_profiles() {
@@ -180,5 +248,51 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let parsed: AdapterConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, parsed);
+    }
+
+    #[test]
+    fn validate_default_config_passes() {
+        let config = default_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_schema_version() {
+        let mut config = default_config();
+        config.schema_version = String::new();
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.error_code(), AdapterErrorCode::INVALID_PROFILE);
+    }
+
+    #[test]
+    fn validate_rejects_empty_default_profile() {
+        let mut config = default_config();
+        config.default_profile = String::new();
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.error_code(), AdapterErrorCode::INVALID_PROFILE);
+    }
+
+    #[test]
+    fn validate_rejects_missing_default_profile() {
+        let mut config = default_config();
+        config.default_profile = "nonexistent".to_string();
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.error_code(), AdapterErrorCode::INVALID_PROFILE);
+    }
+
+    #[test]
+    fn validate_rejects_empty_profile_name() {
+        let mut config = default_config();
+        config.profiles[0].name = String::new();
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.error_code(), AdapterErrorCode::INVALID_PROFILE);
+    }
+
+    #[test]
+    fn validate_rejects_empty_profile_runtime() {
+        let mut config = default_config();
+        config.profiles[0].agent_identity.runtime = String::new();
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.error_code(), AdapterErrorCode::INVALID_PROFILE);
     }
 }

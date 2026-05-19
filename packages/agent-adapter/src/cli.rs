@@ -43,19 +43,34 @@ impl Cli {
 }
 
 /// Path to the adapter configuration file.
-fn config_path() -> std::path::PathBuf {
-    std::env::current_dir()
-        .unwrap_or_default()
+/// Propagates errors from `current_dir()` rather than silently defaulting.
+fn config_path() -> Result<std::path::PathBuf, AdapterError> {
+    Ok(std::env::current_dir()
+        .map_err(|e| AdapterError::Io {
+            message: format!("cannot determine current directory: {}", e),
+        })?
         .join(AGENT_DIR)
-        .join(CONFIG_FILE)
+        .join(CONFIG_FILE))
 }
 
 /// Path to the adapter artifacts directory.
-fn artifacts_path() -> std::path::PathBuf {
-    std::env::current_dir()
-        .unwrap_or_default()
+/// Propagates errors from `current_dir()` rather than silently defaulting.
+fn artifacts_path() -> Result<std::path::PathBuf, AdapterError> {
+    Ok(std::env::current_dir()
+        .map_err(|e| AdapterError::Io {
+            message: format!("cannot determine current directory: {}", e),
+        })?
         .join(AGENT_DIR)
-        .join(ARTIFACTS_DIR)
+        .join(ARTIFACTS_DIR))
+}
+
+/// Path to the .agent/ directory.
+fn agent_dir() -> Result<std::path::PathBuf, AdapterError> {
+    Ok(std::env::current_dir()
+        .map_err(|e| AdapterError::Io {
+            message: format!("cannot determine current directory: {}", e),
+        })?
+        .join(AGENT_DIR))
 }
 
 /// Resolve actor name from config for a given profile.
@@ -64,27 +79,31 @@ fn resolve_profile_actor(config: &AdapterConfig, profile_name: &str) -> String {
 }
 
 /// Initialize adapter configuration: write default config and create artifacts directory.
+/// Uses atomic write (temp file + rename) so partial state is not left on failure.
 fn init_profile() -> Result<(), AdapterError> {
     let config = default_config();
-    let agent_dir = std::env::current_dir().unwrap_or_default().join(AGENT_DIR);
+    let agent_dir = agent_dir()?;
+    let artifacts_dir = artifacts_path()?;
+    let config_path = config_path()?;
 
     // Create .agent/ directory if it doesn't exist
     std::fs::create_dir_all(&agent_dir)?;
 
     // Create .agent/adapter_artifacts/ directory if it doesn't exist
-    std::fs::create_dir_all(artifacts_path())?;
+    std::fs::create_dir_all(&artifacts_dir)?;
 
-    // Write the configuration file
+    // Write config to a temp file then rename for atomicity
     let yaml = serde_yaml::to_string(&config)?;
-    let config_path = config_path();
-    std::fs::write(&config_path, yaml)?;
+    let temp_path = config_path.with_extension("yaml.tmp");
+    std::fs::write(&temp_path, &yaml)?;
+    std::fs::rename(&temp_path, &config_path)?;
 
     // Output success envelope
     let actor = resolve_profile_actor(&config, &config.default_profile);
     let data = serde_json::json!({
         "initialized": true,
         "config_path": config_path.to_string_lossy(),
-        "artifacts_dir": artifacts_path().to_string_lossy(),
+        "artifacts_dir": artifacts_dir.to_string_lossy(),
     });
     let envelope = SuccessEnvelope::new(&config.default_profile, &actor, data);
     response::output_success(&envelope)
@@ -92,7 +111,7 @@ fn init_profile() -> Result<(), AdapterError> {
 
 /// Validate the adapter configuration file by parsing it.
 fn validate_profile() -> Result<(), AdapterError> {
-    let config_path = config_path();
+    let config_path = config_path()?;
 
     if !config_path.exists() {
         return Err(AdapterError::ProfileNotFound {
@@ -102,34 +121,7 @@ fn validate_profile() -> Result<(), AdapterError> {
 
     let content = std::fs::read_to_string(&config_path)?;
     let config: AdapterConfig = serde_yaml::from_str(&content)?;
-
-    // Validate that all profiles have required fields
-    for profile in &config.profiles {
-        if profile.name.is_empty() {
-            return Err(AdapterError::InvalidProfile {
-                message: "Profile name cannot be empty".to_string(),
-            });
-        }
-        if profile.agent_identity.runtime.is_empty() {
-            return Err(AdapterError::InvalidProfile {
-                message: format!("Profile '{}' has empty runtime", profile.name),
-            });
-        }
-    }
-
-    // Check that default_profile references an existing profile
-    let default_exists = config
-        .profiles
-        .iter()
-        .any(|p| p.name == config.default_profile);
-    if !default_exists {
-        return Err(AdapterError::InvalidProfile {
-            message: format!(
-                "Default profile '{}' not found in profiles list",
-                config.default_profile
-            ),
-        });
-    }
+    config.validate()?;
 
     let actor = resolve_profile_actor(&config, &config.default_profile);
     let data = serde_json::json!({
@@ -144,7 +136,7 @@ fn validate_profile() -> Result<(), AdapterError> {
 
 /// List all profile names and their identities.
 fn list_profiles() -> Result<(), AdapterError> {
-    let config_path = config_path();
+    let config_path = config_path()?;
 
     if !config_path.exists() {
         return Err(AdapterError::ProfileNotFound {
