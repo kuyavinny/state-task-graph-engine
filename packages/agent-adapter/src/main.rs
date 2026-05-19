@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod error;
+mod graph_client;
 mod graph_runner;
 mod graph_types;
 mod response;
