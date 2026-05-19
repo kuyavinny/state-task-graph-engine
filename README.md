@@ -1,29 +1,59 @@
-# State & Task Graph Engine
+# agent-system-os
 
-A Rust CLI for managing DAG-based task graphs for LLM agents. Provides strict state machine enforcement, optimistic concurrency via graph revision, task claiming with lease recovery, and bounded context views to prevent LLM context bloat.
+A modular system for building and orchestrating LLM-powered agents.
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| [`packages/agent-graph`](packages/agent-graph/) | State & task graph engine for agents. Manages DAG-based task graphs with state-machine enforcement, optimistic concurrency, lease-based claiming, and bounded LLM context views. CLI binary: `stage` |
+| `packages/agent-adapter` | _Planned_ — Agent adapter layer |
 
 ## Quick Start
 
 ```bash
-# Initialize a new task graph
-stg init
+# Clone the monorepo
+git clone https://github.com/kuyavinny/agent-system-os.git
+cd agent-system-os
 
-# Check graph status
-stg status
+# Build and install the CLI
+cargo install --path packages/agent-graph
 
-# Get next available task
-stg next
+# Verify
+stage --version
+stage --help
 ```
 
-## Development
+## Workspace Commands
 
 ```bash
-cargo build
-cargo test
-cargo clippy -- -D warnings
-cargo fmt -- --check
+# Build all packages
+cargo build --workspace
+
+# Test all packages
+cargo test --workspace
+
+# Lint all packages
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
 ```
 
-## Architecture
+## Repository Structure
 
-See `.rpiv/artifacts/` for PRD, technical spec, and implementation plan.
+```
+agent-system-os/
+├── Cargo.toml              # Workspace root
+├── packages/
+│   └── agent-graph/        # state-task graph engine
+│       ├── Cargo.toml
+│       ├── src/
+│       ├── tests/
+│       ├── docs/
+│       ├── fixtures/
+│       └── README.md
+└── .gitignore
+```
+
+## License
+
+MIT

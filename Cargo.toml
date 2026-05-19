@@ -1,6 +1,3 @@
-[package]
-name = "state-task-graph-engine"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
+[workspace]
+members = ["packages/agent-graph", "packages/agent-adapter"]
+resolver = "2"
