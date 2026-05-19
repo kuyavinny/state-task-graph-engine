@@ -1,6 +1,6 @@
 # Error Codes Reference
 
-Complete reference for all error codes returned by `stg`. Every error response uses this structure:
+Complete reference for all error codes returned by `stage`. Every error response uses this structure:
 
 ```json
 {
@@ -28,7 +28,7 @@ The `details` object contains structured context specific to each error code.
 
 **Details:** None (message contains the specific validation failure).
 
-**Trigger:** Running `stg validate` on a graph with schema violations, or loading a corrupt graph file.
+**Trigger:** Running `stage validate` on a graph with schema violations, or loading a corrupt graph file.
 
 **Recovery:** Fix the YAML to match the [graph schema](#graph-schema). Ensure all required fields are present and correctly typed.
 
@@ -55,9 +55,9 @@ The `details` object contains structured context specific to each error code.
 { "id": "TASK-001" }
 ```
 
-**Trigger:** `stg append-nodes` with a node ID that already exists in the graph.
+**Trigger:** `stage append-nodes` with a node ID that already exists in the graph.
 
-**Recovery:** Use a different ID, or remove the existing node first via `stg cancel` + `stg reopen` (there is no explicit delete command in v1).
+**Recovery:** Use a different ID, or remove the existing node first via `stage cancel` + `stage reopen` (there is no explicit delete command in v1).
 
 ---
 
@@ -70,7 +70,7 @@ The `details` object contains structured context specific to each error code.
 { "id": "NONEXISTENT" }
 ```
 
-**Trigger:** `stg append-nodes` with a node that depends on an ID not yet in the graph.
+**Trigger:** `stage append-nodes` with a node that depends on an ID not yet in the graph.
 
 **Recovery:** Either add the dependency node first, or remove the dependency from the node definition.
 
@@ -82,7 +82,7 @@ The `details` object contains structured context specific to each error code.
 
 **Details:** None (message describes the cycle).
 
-**Trigger:** `stg validate` or any command that runs validation (all of them, via `load_validate_reconcile`).
+**Trigger:** `stage validate` or any command that runs validation (all of them, via `load_validate_reconcile`).
 
 **Recovery:** Remove circular dependencies. A node cannot depend on itself, nor can there be a loop (A→B→C→A).
 
@@ -103,7 +103,7 @@ The `details` object contains structured context specific to each error code.
 }
 ```
 
-**Trigger:** Running `stg validate` on a graph with multiple validation errors.
+**Trigger:** Running `stage validate` on a graph with multiple validation errors.
 
 **Recovery:** Inspect each error in `details.errors` and fix them individually.
 
@@ -125,7 +125,7 @@ The `details` object contains structured context specific to each error code.
 
 **Trigger:** Attempting a transition that violates the state machine rules. For example, calling `complete` on a PENDING task (must be IN_PROGRESS first).
 
-**Recovery:** Check the task's current status via `stg status` or `stg summarize`. Follow the valid transition paths:
+**Recovery:** Check the task's current status via `stage status` or `stage summarize`. Follow the valid transition paths:
 
 ```
 PENDING → READY → IN_PROGRESS → COMPLETED
@@ -147,7 +147,7 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 { "id": "TASK-001" }
 ```
 
-**Trigger:** `stg claim` on a task that is PENDING, IN_PROGRESS, COMPLETED, etc.
+**Trigger:** `stage claim` on a task that is PENDING, IN_PROGRESS, COMPLETED, etc.
 
 **Recovery:** Check current status. The task may be waiting for dependencies to complete (PENDING), already claimed (IN_PROGRESS), or finished (COMPLETED/FAILED/etc).
 
@@ -164,7 +164,7 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 
 **Trigger:** Any command that references a node ID that doesn't exist.
 
-**Recovery:** Verify the ID. Use `stg status` to see all node IDs. The task may have been cancelled or the ID may have a typo.
+**Recovery:** Verify the ID. Use `stage status` to see all node IDs. The task may have been cancelled or the ID may have a typo.
 
 ---
 
@@ -177,9 +177,9 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 { "id": "TASK-001" }
 ```
 
-**Trigger:** `stg claim` on a task where `attempts >= max_attempts`.
+**Trigger:** `stage claim` on a task where `attempts >= max_attempts`.
 
-**Recovery:** Use `stg reopen` to reset the task to PENDING/READY, then claim again. Or use `stg cancel` to permanently remove it.
+**Recovery:** Use `stage reopen` to reset the task to PENDING/READY, then claim again. Or use `stage cancel` to permanently remove it.
 
 ---
 
@@ -200,7 +200,7 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 **Trigger:** Any mutation command with `--revision` where the graph has changed.
 
 **Recovery:**
-1. Re-read the current state: `stg status`
+1. Re-read the current state: `stage status`
 2. Re-evaluate whether your action is still valid
 3. Retry with the new revision
 
@@ -231,9 +231,9 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 { "path": "/path/to/file" }
 ```
 
-**Trigger:** Running any command before `stg init`, or `stg append-nodes --file` with a non-existent file path.
+**Trigger:** Running any command before `stage init`, or `stage append-nodes --file` with a non-existent file path.
 
-**Recovery:** Run `stg init` first, or check the file path.
+**Recovery:** Run `stage init` first, or check the file path.
 
 ---
 
@@ -289,7 +289,7 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 
 **Trigger:** Invalid argument values such as `--ttl-seconds 0`, missing required arguments, or wrong types.
 
-**Recovery:** Check the command help (`stg <command> --help`) for valid argument ranges.
+**Recovery:** Check the command help (`stage <command> --help`) for valid argument ranges.
 
 ---
 
@@ -315,7 +315,7 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 
 **Details:** None.
 
-**Trigger:** This should not happen in normal operation. It indicates a bug in `stg`.
+**Trigger:** This should not happen in normal operation. It indicates a bug in `stage`.
 
 **Recovery:** Check the error message for clues. Report the issue with reproduction steps.
 
@@ -349,7 +349,7 @@ PENDING → READY → IN_PROGRESS → COMPLETED
 | `MAX_ATTEMPTS_EXCEEDED` | claim | Reopen first |
 | `STALE_REVISION` | complete, fail, block, skip, cancel, reopen, append-nodes | Re-read and retry |
 | `LEASE_NOT_OWNED` | complete, fail, heartbeat, release | Move to next task |
-| `FILE_NOT_FOUND` | any | Run `stg init` |
+| `FILE_NOT_FOUND` | any | Run `stage init` |
 | `ATOMIC_WRITE_FAILED` | any | Check filesystem |
 | `IO_ERROR` | any | Check permissions |
 | `SERIALIZATION_ERROR` | any | Check file format |

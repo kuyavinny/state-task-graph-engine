@@ -8,18 +8,18 @@
 ## Build from Source
 
 ```bash
-git clone https://github.com/kuyavinny/agent-graph.git
-cd agent-graph
-cargo install --path .
+git clone https://github.com/kuyavinny/agent-system-os.git
+cd agent-system-os
+cargo install --path packages/agent-graph
 ```
 
-This installs the `stg` binary to `~/.cargo/bin/`. Make sure `~/.cargo/bin` is on your `PATH`.
+This installs the `stage` binary to `~/.cargo/bin/`. Make sure `~/.cargo/bin` is on your `PATH`.
 
 ## Verify Installation
 
 ```bash
-stg --version
-stg --help
+stage --version
+stage --help
 ```
 
 ## Build in Release Mode
@@ -27,13 +27,13 @@ stg --help
 For optimized performance:
 
 ```bash
-cargo build --release
+cargo build --release -p agent-graph
 ```
 
-The binary is at `target/release/stg`. You can copy it to any directory on your `PATH`:
+The binary is at `target/release/stage`. You can copy it to any directory on your `PATH`:
 
 ```bash
-cp target/release/stg /usr/local/bin/stg
+cp target/release/stage /usr/local/bin/stage
 ```
 
 ## Cross-Compilation
@@ -45,7 +45,7 @@ To build for a different target:
 rustup target add x86_64-unknown-linux-musl
 
 # Build
-cargo build --release --target x86_64-unknown-linux-musl
+cargo build --release -p agent-graph --target x86_64-unknown-linux-musl
 ```
 
 Common targets:
@@ -58,15 +58,15 @@ Common targets:
 
 ```bash
 # All tests
-cargo test
+cargo test -p agent-graph
 
 # Unit tests only
-cargo test --lib
+cargo test -p agent-graph --lib
 
 # Integration tests only
-cargo test --test init
-cargo test --test reconcile
-cargo test --test validate
+cargo test -p agent-graph --test init
+cargo test -p agent-graph --test reconcile
+cargo test -p agent-graph --test validate
 
 # With output
 cargo test -- --nocapture
@@ -75,6 +75,6 @@ cargo test -- --nocapture
 ## Linting
 
 ```bash
-cargo clippy --all-targets -- -D warnings
-cargo fmt -- --check
+cargo clippy -p agent-graph --all-targets -- -D warnings
+cargo fmt --all -- --check
 ```

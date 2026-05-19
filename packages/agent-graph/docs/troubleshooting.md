@@ -11,11 +11,11 @@ Common issues, their causes, and how to fix them.
 {"ok":false,"error":{"code":"FILE_NOT_FOUND","message":"...","details":{"path":"..."}}}
 ```
 
-**Cause:** You haven't run `stg init` in this directory yet.
+**Cause:** You haven't run `stage init` in this directory yet.
 
 **Fix:**
 ```bash
-stg init
+stage init
 ```
 
 This creates `.agent/task_graph.yaml` and `.agent/task_events.jsonl`.
@@ -34,12 +34,12 @@ This creates `.agent/task_graph.yaml` and `.agent/task_events.jsonl`.
 **Fix:**
 1. Re-read the current state:
    ```bash
-   stg status
+   stage status
    ```
 2. Verify your intended action is still valid (the task state may have changed).
 3. Retry the mutation with the new revision:
    ```bash
-   stg complete TASK-001 --actor my-bot --revision 5 --result-summary "Done"
+   stage complete TASK-001 --actor my-bot --revision 5 --result-summary "Done"
    ```
 
 **Do not retry more than once without re-reading.** If you get `STALE_REVISION` twice in a row, another agent is actively working on the graph. Wait and re-evaluate.
@@ -48,13 +48,13 @@ This creates `.agent/task_graph.yaml` and `.agent/task_events.jsonl`.
 
 ## Task stuck in PENDING status
 
-**Symptom:** `stg next` returns "No READY tasks available" but tasks are PENDING.
+**Symptom:** `stage next` returns "No READY tasks available" but tasks are PENDING.
 
 **Cause:** The task has dependencies that haven't completed yet. PENDING tasks are promoted to READY only when ALL their dependencies are COMPLETED or SKIPPED.
 
 **Diagnosis:**
 ```bash
-stg summarize STUCK-TASK-ID
+stage summarize STUCK-TASK-ID
 ```
 
 Check `immediate_dependencies` — these are the nodes blocking the promotion. At least one of them is not COMPLETED or SKIPPED.
@@ -76,7 +76,7 @@ Check `immediate_dependencies` — these are the nodes blocking the promotion. A
 
 **Fix:**
 - **Don't retry.** Another agent owns this task.
-- Use `stg next` to find an available task.
+- Use `stage next` to find an available task.
 - If you believe the lease is stale, wait for it to expire (check `lease.expires_at` in the graph).
 
 ---
@@ -92,13 +92,13 @@ Check `immediate_dependencies` — these are the nodes blocking the promotion. A
 
 **Diagnosis:**
 ```bash
-stg status
+stage status
 ```
 
 Check the status breakdown. The task might be:
 - **PENDING:** Dependencies not yet completed. Complete its dependencies first.
 - **IN_PROGRESS:** Already claimed by another agent. Wait or move on.
-- **COMPLETED/FAILED/etc.:** Already in a terminal state. Use `stg reopen` if needed.
+- **COMPLETED/FAILED/etc.:** Already in a terminal state. Use `stage reopen` if needed.
 
 ---
 
@@ -115,7 +115,7 @@ Check the status breakdown. The task might be:
 ```
 PENDING → READY → IN_PROGRESS → COMPLETED/FAILED/BLOCKED/SKIPPED
 ```
-1. Check current status: `stg status`
+1. Check current status: `stage status`
 2. If PENDING, wait for dependencies to complete (auto-promotion to READY).
 3. If READY, `claim` it first to get IN_PROGRESS.
 4. Then you can `complete`, `fail`, `block`, or `skip`.
@@ -134,10 +134,10 @@ PENDING → READY → IN_PROGRESS → COMPLETED/FAILED/BLOCKED/SKIPPED
 **Fix:**
 ```bash
 # Reopen the task to reset it
-stg reopen TASK-001 --actor my-bot --revision "$(stg status | jq -r '.data.revision')"
+stage reopen TASK-001 --actor my-bot --revision "$(stage status | jq -r '.data.revision')"
 
 # Then claim again
-stg claim TASK-001 --actor my-bot --ttl-seconds 300
+stage claim TASK-001 --actor my-bot --ttl-seconds 300
 ```
 
 ---
@@ -156,7 +156,7 @@ stg claim TASK-001 --actor my-bot --ttl-seconds 300
    ```bash
    cat .agent/task_graph.yaml | grep -A2 "dependencies:"
    ```
-2. Remove the circular dependency by editing the node YAML in `plan.yaml` and re-appending, or using `stg cancel` on one node and recreating it without the circular dependency.
+2. Remove the circular dependency by editing the node YAML in `plan.yaml` and re-appending, or using `stage cancel` on one node and recreating it without the circular dependency.
 
 ---
 
@@ -170,7 +170,7 @@ stg claim TASK-001 --actor my-bot --ttl-seconds 300
 **Cause:** A node references a dependency ID that doesn't exist in the graph.
 
 **Fix:** Either:
-1. Add the dependency node first: `stg append-nodes --revision N --file file-with-dependency.yaml`
+1. Add the dependency node first: `stage append-nodes --revision N --file file-with-dependency.yaml`
 2. Or remove the dependency from the node definition
 
 ---
@@ -190,7 +190,7 @@ stg claim TASK-001 --actor my-bot --ttl-seconds 300
 - **Log the warning** for monitoring.
 - Inspect `.agent/task_events.jsonl` for the last few entries.
 - If the warning persists across multiple operations, the event log may have duplicate entries. You can safely remove duplicate lines (same `event_id`).
-- If you want to force a clean state: back up `.agent/task_events.jsonl`, then re-initialize with `stg init` and `stg append-nodes`.
+- If you want to force a clean state: back up `.agent/task_events.jsonl`, then re-initialize with `stage init` and `stage append-nodes`.
 
 ---
 
@@ -233,7 +233,7 @@ cat .agent/task_events.jsonl | python3 -c "import sys, json; [json.loads(line) f
 
 **Diagnosis:**
 ```bash
-stg summarize TASK-ID
+stage summarize TASK-ID
 ```
 
 Check `immediate_dependencies` — at least one is not COMPLETED or SKIPPED. Only COMPLETED and SKIPPED count as "satisfied" dependencies. BLOCKED, FAILED, or CANCELLED dependencies do NOT satisfy the requirement.
@@ -251,7 +251,7 @@ Check `immediate_dependencies` — at least one is not COMPLETED or SKIPPED. Onl
 
 **Cause:** Another agent or process is actively modifying the graph between your reads. This is normal in multi-agent setups.
 
-**Fix:** This is expected behavior. Always capture the revision from `stg status` immediately before a mutation, and use it right away. Don't batch reads and writes across time gaps.
+**Fix:** This is expected behavior. Always capture the revision from `stage status` immediately before a mutation, and use it right away. Don't batch reads and writes across time gaps.
 
 ---
 
@@ -262,7 +262,7 @@ Check `immediate_dependencies` — at least one is not COMPLETED or SKIPPED. Onl
 **Cause:** Lease expiry is lazy — it only happens during `load_validate_reconcile`, which runs on every read. If nobody is reading the graph, the lease isn't checked.
 
 **Fix:**
-- Run any `stg` command (e.g., `stg status`) to trigger reconciliation.
+- Run any `stage` command (e.g., `stage status`) to trigger reconciliation.
 - The expired lease will be cleared automatically.
 
 ---
@@ -277,20 +277,20 @@ Check `immediate_dependencies` — at least one is not COMPLETED or SKIPPED. Onl
 **Cause:** The `--file` path doesn't exist or isn't readable.
 
 **Fix:**
-- Use an absolute path: `stg append-nodes --revision 0 --file /absolute/path/to/nodes.yaml`
-- Or make sure the relative path is correct from the directory where you're running `stg`.
+- Use an absolute path: `stage append-nodes --revision 0 --file /absolute/path/to/nodes.yaml`
+- Or make sure the relative path is correct from the directory where you're running `stage`.
 
 ---
 
 ## All tasks show as PENDING and next returns "No READY tasks available"
 
-**Symptom:** `stg status` shows all PENDING, `stg next` returns null.
+**Symptom:** `stage status` shows all PENDING, `stage next` returns null.
 
 **Cause:** You've just loaded tasks with `append-nodes`. All newly created tasks start as PENDING. The engine promotes PENDING → READY only when all dependencies are satisfied.
 
 **But:** If a task has NO dependencies (it's a root task), it should be promoted immediately to READY.
 
 **If root tasks are stuck PENDING:**
-1. Run `stg status` — this triggers reconciliation and should promote them.
-2. If they're still PENDING after `stg status`, check the YAML: ensure `dependencies: []` is present and empty (not null).
-3. If the issue persists, run `stg validate` to check for schema errors.
+1. Run `stage status` — this triggers reconciliation and should promote them.
+2. If they're still PENDING after `stage status`, check the YAML: ensure `dependencies: []` is present and empty (not null).
+3. If the issue persists, run `stage validate` to check for schema errors.

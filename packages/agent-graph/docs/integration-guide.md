@@ -1,6 +1,6 @@
 # Integration Guide
 
-How to integrate `stg` into human-facing workflows: scripts, CI/CD pipelines, and development tooling.
+How to integrate `stage` into human-facing workflows: scripts, CI/CD pipelines, and development tooling.
 
 For agent-specific integration, see [Agent Integration Protocol](agent-integration-protocol.md).
 
@@ -11,18 +11,18 @@ For agent-specific integration, see [Agent Integration Protocol](agent-integrati
 ### Build from Source
 
 ```bash
-git clone https://github.com/kuyavinny/agent-graph.git
-cd agent-graph
-cargo install --path .
+git clone https://github.com/kuyavinny/agent-system-os.git
+cd agent-system-os
+cargo install --path packages/agent-graph
 ```
 
-Binary installs to `~/.cargo/bin/stg`. Make sure `~/.cargo/bin` is on your `PATH`.
+Binary installs to `~/.cargo/bin/stage`. Make sure `~/.cargo/bin` is on your `PATH`.
 
 ### Verify Installation
 
 ```bash
-stg --version
-stg --help
+stage --version
+stage --help
 ```
 
 ---
@@ -33,7 +33,7 @@ stg --help
 
 ```bash
 mkdir my-project && cd my-project
-stg init
+stage init
 ```
 
 This creates `.agent/task_graph.yaml` and `.agent/task_events.jsonl`.
@@ -131,44 +131,44 @@ Create `plan.yaml`:
 ### 3. Load the Plan
 
 ```bash
-stg append-nodes --revision 0 --file plan.yaml
+stage append-nodes --revision 0 --file plan.yaml
 ```
 
 ### 4. Work Through Tasks
 
 ```bash
 # Check overall progress
-stg status
+stage status
 
 # Get next task (highest priority READY task)
-stg next
+stage next
 
 # Claim it
-stg claim setup-repo --actor devbot --ttl-seconds 600
+stage claim setup-repo --actor devbot --ttl-seconds 600
 
 # ... do the work ...
 
 # Complete it
-REVISION=$(stg status | jq -r '.data.revision')
-stg complete setup-repo --actor devbot --revision "$REVISION" --result-summary "Repo initialized"
+REVISION=$(stage status | jq -r '.data.revision')
+stage complete setup-repo --actor devbot --revision "$REVISION" --result-summary "Repo initialized"
 
 # Dependencies auto-promote: setup-db and setup-api become READY
-stg next  # Returns "setup-db" (priority 8 > setup-api priority 7)
+stage next  # Returns "setup-db" (priority 8 > setup-api priority 7)
 ```
 
 ### 5. Handle Failures
 
 ```bash
-stg claim setup-db --actor devbot --ttl-seconds 600
+stage claim setup-db --actor devbot --ttl-seconds 600
 
 # ... work fails ...
 
-REVISION=$(stg status | jq -r '.data.revision')
-stg fail setup-db --actor devbot --revision "$REVISION" --failure-reason "Schema migration conflict"
+REVISION=$(stage status | jq -r '.data.revision')
+stage fail setup-db --actor devbot --revision "$REVISION" --failure-reason "Schema migration conflict"
 
 # Later, try again:
-stg reopen setup-db --actor devbot --revision "$(stg status | jq -r '.data.revision')"
-stg claim setup-db --actor devbot --ttl-seconds 600
+stage reopen setup-db --actor devbot --revision "$(stage status | jq -r '.data.revision')"
+stage claim setup-db --actor devbot --ttl-seconds 600
 ```
 
 ---
@@ -184,7 +184,7 @@ set -euo pipefail
 ACTOR="bot-$(hostname)"
 
 # Get next task
-NEXT=$(stg next)
+NEXT=$(stage next)
 TASK_ID=$(echo "$NEXT" | jq -r '.data.id // empty')
 
 if [ -z "$TASK_ID" ]; then
@@ -195,14 +195,14 @@ fi
 echo "Working on: $TASK_ID"
 
 # Claim it
-stg claim "$TASK_ID" --actor "$ACTOR" --ttl-seconds 300
+stage claim "$TASK_ID" --actor "$ACTOR" --ttl-seconds 300
 
 # Do work...
 do_work "$TASK_ID"
 
 # Complete it
-REVISION=$(stg status | jq -r '.data.revision')
-stg complete "$TASK_ID" --actor "$ACTOR" --revision "$REVISION" --result-summary "Completed successfully"
+REVISION=$(stage status | jq -r '.data.revision')
+stage complete "$TASK_ID" --actor "$ACTOR" --revision "$REVISION" --result-summary "Completed successfully"
 ```
 
 ### Python Automation
@@ -211,10 +211,10 @@ stg complete "$TASK_ID" --actor "$ACTOR" --revision "$REVISION" --result-summary
 import subprocess
 import json
 
-def stg(*args):
-    """Call stg CLI and return parsed response."""
+def stage(*args):
+    """Call stage CLI and return parsed response."""
     result = subprocess.run(
-        ["stg"] + list(args),
+        ["stage"] + list(args),
         capture_output=True, text=True
     )
     envelope = json.loads(result.stdout)
@@ -233,17 +233,17 @@ class STGError(Exception):
         super().__init__(f"{code}: {message}")
 
 # Usage
-status = stg("status")
+status = stage("status")
 print(f"Graph revision: {status['data']['revision']}")
 print(f"Tasks: {status['data']['status']}")
 
-next_task = stg("next")
+next_task = stage("next")
 if next_task["data"].get("id"):
     task_id = next_task["data"]["id"]
-    stg("claim", task_id, "--actor", "my-bot", "--ttl-seconds", "600")
+    stage("claim", task_id, "--actor", "my-bot", "--ttl-seconds", "600")
     # ... do work ...
-    revision = stg("status")["data"]["revision"]
-    stg("complete", task_id, "--actor", "my-bot",
+    revision = stage("status")["data"]["revision"]
+    stage("complete", task_id, "--actor", "my-bot",
         "--revision", str(revision),
         "--result-summary", "Task completed")
 ```
@@ -253,8 +253,8 @@ if next_task["data"].get("id"):
 ```javascript
 const { execSync } = require('child_process');
 
-function stg(...args) {
-    const output = execSync(`stg ${args.join(' ')}`, { encoding: 'utf8' });
+function stage(...args) {
+    const output = execSync(`stage ${args.join(' ')}`, { encoding: 'utf8' });
     const envelope = JSON.parse(output);
     if (!envelope.ok) {
         const { code, message } = envelope.error;
@@ -265,21 +265,21 @@ function stg(...args) {
 
 // Process tasks in a loop
 function processNextTask(actor) {
-    const next = stg('next');
+    const next = stage('next');
     if (!next.data.id) return false;
 
     const taskId = next.data.id;
-    stg('claim', taskId, '--actor', actor, '--ttl-seconds', '600');
+    stage('claim', taskId, '--actor', actor, '--ttl-seconds', '600');
 
     try {
         // ... do work ...
-        const revision = stg('status').data.revision;
-        stg('complete', taskId, '--actor', actor, '--revision', String(revision),
+        const revision = stage('status').data.revision;
+        stage('complete', taskId, '--actor', actor, '--revision', String(revision),
             '--result-summary', 'Completed');
         return true;
     } catch (e) {
-        const revision = stg('status').data.revision;
-        stg('fail', taskId, '--actor', actor, '--revision', String(revision),
+        const revision = stage('status').data.revision;
+        stage('fail', taskId, '--actor', actor, '--revision', String(revision),
             '--failure-reason', e.message);
         return true;
     }
@@ -302,45 +302,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install stg
-        run: cargo install --path .
+      - name: Install stage
+        run: cargo install --path packages/agent-graph
 
       - name: Initialize (first time only)
         run: |
           if [ ! -d .agent ]; then
-            stg init
-            stg append-nodes --revision 0 --file plan.yaml
+            stage init
+            stage append-nodes --revision 0 --file plan.yaml
           fi
 
       - name: Claim and execute task
         env:
           ACTOR: ci-${{ github.run_id }}
         run: |
-          NEXT=$(stg next)
+          NEXT=$(stage next)
           TASK_ID=$(echo "$NEXT" | jq -r '.data.id // empty')
 
           [ -z "$TASK_ID" ] && echo "No tasks" && exit 0
 
-          stg claim "$TASK_ID" --actor "$ACTOR" --ttl-seconds 3600
+          stage claim "$TASK_ID" --actor "$ACTOR" --ttl-seconds 3600
 
           # Do work...
           ./run-task.sh "$TASK_ID"
 
-          REVISION=$(stg status | jq -r '.data.revision')
-          stg complete "$TASK_ID" --actor "$ACTOR" \
+          REVISION=$(stage status | jq -r '.data.revision')
+          stage complete "$TASK_ID" --actor "$ACTOR" \
             --revision "$REVISION" \
             --result-summary "CI pass ${{ github.run_number }}"
 ```
 
 ### Git Hooks Integration
 
-Use `stg` to track task progress alongside commits:
+Use `stage` to track task progress alongside commits:
 
 ```bash
 # .git/hooks/pre-commit
 #!/bin/bash
 # Auto-update task status before committing
-TASK_ID=$(stg next | jq -r '.data.id // empty')
+TASK_ID=$(stage next | jq -r '.data.id // empty')
 if [ -n "$TASK_ID" ]; then
     echo "Currently working on: $TASK_ID"
 fi
@@ -350,10 +350,10 @@ fi
 # .git/hooks/post-commit
 #!/bin/bash
 # After committing, mark the current task as complete if it was claimed by this repo
-STATUS=$(stg status)
+STATUS=$(stage status)
 REVISION=$(echo "$STATUS" | jq -r '.data.revision')
 # Find any IN_PROGRESS task claimed by "git-$(whoami)"
-# (requires jq filtering of stg status output)
+# (requires jq filtering of stage status output)
 ```
 
 ---
@@ -408,13 +408,13 @@ The `summarize` command provides a bounded view of the graph around a specific t
 
 ```bash
 # Get context for a task with default limits
-stg summarize TASK-001
+stage summarize TASK-001
 
 # Reduce context size for tasks with long histories
-stg summarize TASK-001 --max-events 3 --max-completed-summaries 2
+stage summarize TASK-001 --max-events 3 --max-completed-summaries 2
 
 # Exclude blocked/failed tasks from context
-stg summarize TASK-001 --include-blocked false
+stage summarize TASK-001 --include-blocked false
 ```
 
 See the [Agent Integration Protocol](agent-integration-protocol.md#5-the-summarize-command--building-llm-context) for detailed usage patterns.
@@ -435,8 +435,8 @@ When multiple agents work on the same project:
 
 ### Multi-Agent Etiquette
 
-- **Always check `stg next`** before claiming — another agent may have claimed a task between your reads
+- **Always check `stage next`** before claiming — another agent may have claimed a task between your reads
 - **Always use `--actor`** — never leave it blank or reuse another agent's name
 - **Set realistic TTL** — a 1-hour TTL for a 5-minute task blocks other agents
-- **Release tasks you can't complete** — `stg release TASK-ID --actor YOUR-NAME`
-- **Don't edit `.agent/` files directly** — always use `stg` commands
+- **Release tasks you can't complete** — `stage release TASK-ID --actor YOUR-NAME`
+- **Don't edit `.agent/` files directly** — always use `stage` commands

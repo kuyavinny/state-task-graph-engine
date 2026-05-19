@@ -1,24 +1,24 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-fn stg() -> Command {
-    Command::cargo_bin("stg").unwrap()
+fn stage() -> Command {
+    Command::cargo_bin("stage").unwrap()
 }
 
 #[test]
 fn cli_help_flag_works() {
-    stg()
+    stage()
         .arg("--help")
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "agent-graph: task graph engine for agents",
+            "agent-graph: state-task graph engine for agents",
         ));
 }
 
 #[test]
 fn cli_init_flag_works() {
-    stg()
+    stage()
         .arg("--help")
         .assert()
         .success()
@@ -29,7 +29,11 @@ fn cli_init_flag_works() {
 fn init_creates_agent_directory_and_files() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 
     assert!(tmp.path().join(".agent").exists());
     assert!(tmp.path().join(".agent/task_graph.yaml").exists());
@@ -40,7 +44,7 @@ fn init_creates_agent_directory_and_files() {
 fn init_outputs_success_json_envelope() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
-    stg()
+    stage()
         .arg("init")
         .current_dir(tmp.path())
         .assert()
@@ -55,10 +59,14 @@ fn init_fails_if_already_initialized() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
     // First init should succeed
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 
     // Second init should fail with ATOMIC_WRITE_FAILED
-    stg()
+    stage()
         .arg("init")
         .current_dir(tmp.path())
         .assert()
@@ -71,7 +79,7 @@ fn uninitialized_subcommands_return_not_implemented() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
     // validate is implemented in PR#2 — needs a graph file
-    stg()
+    stage()
         .arg("validate")
         .current_dir(tmp.path())
         .assert()
@@ -79,7 +87,7 @@ fn uninitialized_subcommands_return_not_implemented() {
         .stdout(predicate::str::contains("TASK_NOT_FOUND"));
 
     // status — implemented in PR#3, needs a graph file
-    stg()
+    stage()
         .arg("status")
         .current_dir(tmp.path())
         .assert()
@@ -87,7 +95,7 @@ fn uninitialized_subcommands_return_not_implemented() {
         .stdout(predicate::str::contains("TASK_NOT_FOUND"));
 
     // next — implemented in PR#3, needs a graph file
-    stg()
+    stage()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
@@ -99,10 +107,14 @@ fn uninitialized_subcommands_return_not_implemented() {
 fn json_failure_envelope_format() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 
     // Second init should output a structured JSON error envelope
-    let output = stg()
+    let output = stage()
         .arg("init")
         .current_dir(tmp.path())
         .assert()
@@ -122,7 +134,11 @@ fn json_failure_envelope_format() {
 fn init_graph_yaml_is_valid() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 
     let graph_content = std::fs::read_to_string(tmp.path().join(".agent/task_graph.yaml")).unwrap();
 
@@ -136,7 +152,11 @@ fn init_graph_yaml_is_valid() {
 fn init_events_file_contains_init_event() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 
     let events_content =
         std::fs::read_to_string(tmp.path().join(".agent/task_events.jsonl")).unwrap();
@@ -162,7 +182,11 @@ fn init_events_file_contains_init_event() {
 fn atomic_write_no_orphaned_tmp_file() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 
     // After init, there should be no .tmp file
     assert!(!tmp.path().join(".agent/task_graph.yaml.tmp").exists());

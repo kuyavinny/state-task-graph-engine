@@ -1,11 +1,15 @@
 use assert_cmd::Command;
 
-fn stg() -> Command {
-    Command::cargo_bin("stg").unwrap()
+fn stage() -> Command {
+    Command::cargo_bin("stage").unwrap()
 }
 
 fn init_project(dir: &assert_fs::TempDir) {
-    stg().arg("init").current_dir(dir.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(dir.path())
+        .assert()
+        .success();
 }
 
 /// Helper: write a graph YAML with given nodes to the .agent directory.
@@ -19,7 +23,7 @@ fn status_returns_counts_for_empty_graph() {
     let tmp = assert_fs::TempDir::new().unwrap();
     init_project(&tmp);
 
-    let output = stg()
+    let output = stage()
         .arg("status")
         .current_dir(tmp.path())
         .assert()
@@ -91,7 +95,7 @@ nodes:
 "#;
     write_graph(&tmp, yaml);
 
-    let output = stg()
+    let output = stage()
         .arg("status")
         .current_dir(tmp.path())
         .assert()
@@ -163,7 +167,7 @@ nodes:
 "#;
     write_graph(&tmp, yaml);
 
-    let output = stg()
+    let output = stage()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
@@ -184,7 +188,7 @@ fn next_returns_no_ready_message_when_none_available() {
     init_project(&tmp);
 
     // Empty graph has no READY tasks
-    let output = stg()
+    let output = stage()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
@@ -258,7 +262,7 @@ nodes:
 "#;
     write_graph(&tmp, yaml);
 
-    let output = stg()
+    let output = stage()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
@@ -292,7 +296,7 @@ nodes: []
     let event = r#"{"event_id":"test-1","timestamp":"2026-05-17T00:00:00Z","graph_revision_before":2,"graph_revision_after":3,"node_id":"a","actor":"system","action":"init","from_status":null,"to_status":null,"reason":null,"metadata":null}"#;
     std::fs::write(&events_path, event).unwrap();
 
-    let output = stg()
+    let output = stage()
         .arg("status")
         .current_dir(tmp.path())
         .assert()
@@ -399,7 +403,7 @@ nodes:
 "#;
     std::fs::write(&nodes_path, nodes_yaml).unwrap();
 
-    let output = stg()
+    let output = stage()
         .args(["append-nodes", "--revision", "0", "--file"])
         .arg(nodes_path)
         .current_dir(tmp.path())
@@ -450,7 +454,7 @@ fn append_nodes_stale_revision_fails() {
 "#;
     std::fs::write(&nodes_path, nodes_yaml).unwrap();
 
-    let output = stg()
+    let output = stage()
         .args(["append-nodes", "--revision", "5", "--file"])
         .arg(nodes_path)
         .current_dir(tmp.path())
@@ -522,7 +526,7 @@ fn append_nodes_creates_cycle_fails() {
 "#;
     std::fs::write(&nodes_path, nodes_yaml).unwrap();
 
-    let output = stg()
+    let output = stage()
         .args(["append-nodes", "--revision", "0", "--file"])
         .arg(nodes_path)
         .current_dir(tmp.path())
@@ -549,7 +553,7 @@ fn append_nodes_file_not_found() {
     let tmp = assert_fs::TempDir::new().unwrap();
     init_project(&tmp);
 
-    let output = stg()
+    let output = stage()
         .args([
             "append-nodes",
             "--revision",
@@ -622,7 +626,7 @@ fn append_nodes_desync_rejected() {
     )
     .unwrap();
 
-    let output = stg()
+    let output = stage()
         .args(["append-nodes", "--revision", "5", "--file"])
         .arg(nodes_path)
         .current_dir(tmp.path())
@@ -716,7 +720,7 @@ nodes:
     // Run next 5 times — should return the same task every time
     let mut results = Vec::new();
     for _ in 0..5 {
-        let output = stg()
+        let output = stage()
             .arg("next")
             .current_dir(tmp.path())
             .assert()
@@ -783,7 +787,7 @@ nodes:
 "#;
     write_graph(&tmp, yaml);
 
-    let output = stg()
+    let output = stage()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
@@ -829,7 +833,7 @@ nodes:
     write_graph(&tmp, yaml);
 
     // Claim the task
-    let claim_out = stg()
+    let claim_out = stage()
         .args([
             "claim",
             "--actor",
@@ -850,7 +854,7 @@ nodes:
     let rev = claim_env["graph_revision"].as_u64().unwrap();
 
     // Complete the task
-    let comp_out = stg()
+    let comp_out = stage()
         .args([
             "complete",
             "--actor",
@@ -872,7 +876,7 @@ nodes:
     assert_eq!(comp_env["data"]["status"], "COMPLETED");
 
     // Status should show 1 COMPLETED
-    let status_out = stg()
+    let status_out = stage()
         .arg("status")
         .current_dir(tmp.path())
         .assert()
@@ -917,7 +921,7 @@ nodes:
     write_graph(&tmp, yaml);
 
     // Claim by worker-1
-    let claim_out = stg()
+    let claim_out = stage()
         .args([
             "claim",
             "--actor",
@@ -936,7 +940,7 @@ nodes:
     let rev = claim_env["graph_revision"].as_u64().unwrap();
 
     // Try to complete by worker-2 (non-owner)
-    stg()
+    stage()
         .args([
             "complete",
             "--actor",
@@ -986,7 +990,7 @@ nodes:
     write_graph(&tmp, yaml);
 
     // Skip directly from READY
-    let out = stg()
+    let out = stage()
         .args([
             "skip",
             "--actor",
@@ -1061,7 +1065,7 @@ nodes:
     write_graph(&tmp, yaml);
 
     // Claim should fail with dependency info in error message
-    stg()
+    stage()
         .args([
             "claim",
             "--actor",
@@ -1214,7 +1218,7 @@ nodes:
     let events_path = tmp.path().join(".agent").join("task_events.jsonl");
     std::fs::write(&events_path, events.join("\n")).unwrap();
 
-    let output = stg()
+    let output = stage()
         .args([
             "summarize",
             "a",
@@ -1341,7 +1345,7 @@ nodes:
     let events_path = tmp.path().join(".agent").join("task_events.jsonl");
     std::fs::write(&events_path, events.join("\n")).unwrap();
 
-    let output = stg()
+    let output = stage()
         .args([
             "summarize",
             "a",
@@ -1419,7 +1423,7 @@ nodes:
 "#;
     write_graph(&tmp, yaml);
 
-    let output = stg()
+    let output = stage()
         .args(["summarize", "a", "--include-blocked", "false"])
         .current_dir(tmp.path())
         .assert()
@@ -1473,7 +1477,7 @@ nodes:
     let events_path = tmp.path().join(".agent").join("task_events.jsonl");
     std::fs::write(&events_path, "not-valid-json-at-all\n").unwrap();
 
-    let output = stg()
+    let output = stage()
         .args(["summarize", "a"])
         .current_dir(tmp.path())
         .assert()
@@ -1532,7 +1536,7 @@ nodes:
     let event = r#"{"event_id":"test-1","timestamp":"2026-05-17T00:00:00Z","graph_revision_before":2,"graph_revision_after":3,"node_id":"a","actor":"system","action":"init","from_status":null,"to_status":null,"reason":null,"metadata":null}"#;
     std::fs::write(&events_path, event).unwrap();
 
-    let output = stg()
+    let output = stage()
         .args(["summarize", "a"])
         .current_dir(tmp.path())
         .assert()
@@ -1555,7 +1559,11 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
     // 1. init
-    stg().arg("init").current_dir(tmp.path()).assert().success();
+    stage()
+        .arg("init")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
 
     assert!(tmp.path().join(".agent").join("task_graph.yaml").exists());
     assert!(tmp.path().join(".agent").join("task_events.jsonl").exists());
@@ -1595,7 +1603,7 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap();
 
-    stg()
+    stage()
         .args([
             "append-nodes",
             "--revision",
@@ -1608,7 +1616,7 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
         .success();
 
     // 3. next
-    let output = stg()
+    let output = stage()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
@@ -1623,7 +1631,7 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
     assert_eq!(envelope["data"]["status"], "READY");
 
     // 4. claim
-    stg()
+    stage()
         .args(["claim", "--actor", "worker-1", "--ttl-seconds", "300", "a"])
         .current_dir(tmp.path())
         .assert()
@@ -1640,7 +1648,7 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
         .unwrap();
 
     // 5. complete
-    stg()
+    stage()
         .args([
             "complete",
             "--actor",
@@ -1656,7 +1664,7 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
         .success();
 
     // 6. next (should return empty since no remaining tasks)
-    let output = stg()
+    let output = stage()
         .arg("next")
         .current_dir(tmp.path())
         .assert()
@@ -1670,7 +1678,7 @@ fn full_lifecycle_init_append_claim_complete_summarize() {
     assert!(envelope["data"].is_null() || envelope["data"]["id"].is_null());
 
     // 7. summarize
-    let output = stg()
+    let output = stage()
         .args(["summarize", "a"])
         .current_dir(tmp.path())
         .assert()

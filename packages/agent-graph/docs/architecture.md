@@ -6,7 +6,7 @@ Internal design of agent-graph. This document is for contributors, integrators, 
 
 ## Overview
 
-`stg` is a single-binary Rust CLI that manages a DAG-based task graph stored on a local filesystem. It has no external dependencies (no database, no message queue, no network layer). All state lives in two files:
+`stage` is a single-binary Rust CLI that manages a DAG-based task graph stored on a local filesystem. It has no external dependencies (no database, no message queue, no network layer). All state lives in two files:
 
 ```
 .agent/
@@ -112,17 +112,17 @@ Every state change generates an event appended to `.agent/task_events.jsonl`:
 
 | Event Action | Trigger |
 |-------------|---------|
-| `init` | `stg init` |
-| `claim` | `stg claim` |
-| `heartbeat` | `stg heartbeat` |
-| `release` | `stg release` |
-| `complete` | `stg complete` |
-| `fail` | `stg fail` |
-| `block` | `stg block` |
-| `skip` | `stg skip` |
-| `cancel` | `stg cancel` |
-| `reopen` | `stg reopen` |
-| `append_nodes` | `stg append-nodes` |
+| `init` | `stage init` |
+| `claim` | `stage claim` |
+| `heartbeat` | `stage heartbeat` |
+| `release` | `stage release` |
+| `complete` | `stage complete` |
+| `fail` | `stage fail` |
+| `block` | `stage block` |
+| `skip` | `stage skip` |
+| `cancel` | `stage cancel` |
+| `reopen` | `stage reopen` |
+| `append_nodes` | `stage append-nodes` |
 | `lease_expired` | Reconciliation (auto) |
 | `dependency_resolved` | Reconciliation (auto) |
 
