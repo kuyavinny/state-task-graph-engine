@@ -269,4 +269,54 @@ mod tests {
             crate::error::AdapterErrorCode::CLAIM_FAILED
         );
     }
+
+    // --- Strict File Boundary Tests ---
+    // The adapter must never depend on reading graph state files directly.
+    // It must work correctly using only the GraphRunner trait, even when
+    // .agent/task_graph.yaml and .agent/task_events.jsonl are absent.
+
+    #[test]
+    fn adapter_works_without_graph_state_files() {
+        // Use MockRunner — no filesystem access, no graph state files
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "next",
+            r#"{"status":"success","data":{"task_id":"t42","title":"Test task","description":"desc","graph_revision":1,"lease_expiration":"2026-01-01T00:00:00Z","dependencies":[]}}"#,
+        );
+        runner.set_response(
+            "claim t42 test-agent --revision 1",
+            r#"{"status":"success","data":{"claimed":true,"task_id":"t42","actor":"test-agent","graph_revision":2}}"#,
+        );
+        runner.set_response(
+            "summarize t42",
+            r#"{"status":"success","data":{"task_id":"t42","summary":"Task summary","graph_revision":2,"dependencies":[],"recent_events":[]}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+
+        // All three operations succeed without any filesystem access
+        let next_result = client.next().unwrap();
+        assert_eq!(next_result.data.task_id, Some("t42".to_string()));
+
+        let claim_result = client.claim("t42", "test-agent", 1).unwrap();
+        assert!(claim_result.data.claimed);
+
+        let summarize_result = client.summarize("t42").unwrap();
+        assert_eq!(summarize_result.data.task_id, "t42");
+    }
+
+    #[test]
+    fn claim_with_special_characters_in_args() {
+        // Verify that special characters in task IDs and actor names
+        // are passed through correctly (no shell interpolation issues)
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "claim task-1_v2.0 agent-name --revision 42",
+            r#"{"status":"success","data":{"claimed":true,"task_id":"task-1_v2.0","actor":"agent-name","graph_revision":43}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.claim("task-1_v2.0", "agent-name", 42);
+        assert!(result.is_ok());
+    }
 }
