@@ -11,7 +11,9 @@ fn cli_help_flag_works() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("State & Task Graph Engine"));
+        .stdout(predicate::str::contains(
+            "agent-graph: task graph engine for agents",
+        ));
 }
 
 #[test]

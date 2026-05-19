@@ -1,5 +1,5 @@
 [package]
-name = "state-task-graph-engine"
+name = "agent-graph"
 version = "0.1.0"
 edition = "2024"
 

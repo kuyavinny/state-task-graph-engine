@@ -1,6 +1,8 @@
-# State & Task Graph Engine
+# agent-graph
 
 A Rust CLI for managing DAG-based task graphs for LLM agents. Provides strict state-machine enforcement, optimistic concurrency via graph revision, task claiming with lease recovery, and bounded context views to prevent LLM context bloat.
+
+Formerly: *State & Task Graph Engine* (`state-task-graph-engine`)
 
 ---
 

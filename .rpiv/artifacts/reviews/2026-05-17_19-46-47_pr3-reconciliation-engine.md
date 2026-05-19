@@ -2,7 +2,7 @@
 template_version: 2
 date: 2026-05-17T19:46:47-0800
 author: kuyavinny
-repository: state-task-graph-engine
+repository: agent-graph
 branch: feat/pr3-reconciliation-engine
 commit: 15c46b6
 review_type: pr

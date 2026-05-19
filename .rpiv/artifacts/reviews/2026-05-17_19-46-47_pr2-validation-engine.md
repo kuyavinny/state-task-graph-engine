@@ -2,7 +2,7 @@
 template_version: 2
 date: 2026-05-17T19:46:47-0800
 author: kuyavinny
-repository: state-task-graph-engine
+repository: agent-graph
 branch: feat/pr2-validation-engine
 commit: 3e28d02
 review_type: pr

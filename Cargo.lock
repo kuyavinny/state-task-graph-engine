@@ -3,6 +3,23 @@
 version = 4
 
 [[package]]
+name = "agent-graph"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "assert_fs",
+ "chrono",
+ "clap",
+ "predicates",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -724,23 +741,6 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-
-[[package]]
-name = "state-task-graph-engine"
-version = "0.1.0"
-dependencies = [
- "assert_cmd",
- "assert_fs",
- "chrono",
- "clap",
- "predicates",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror",
- "uuid",
-]
 
 [[package]]
 name = "strsim"
