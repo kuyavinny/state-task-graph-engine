@@ -3,9 +3,9 @@
 use crate::error::AdapterError;
 use crate::graph_runner::GraphRunner;
 use crate::graph_types::{
-    GraphClaimPayload, GraphFailureEnvelope, GraphNextPayload, GraphReleasePayload,
-    GraphSuccessEnvelope, GraphSummarizePayload, is_graph_failure, parse_graph_failure,
-    parse_graph_success,
+    GraphClaimPayload, GraphFailureEnvelope, GraphHeartbeatPayload, GraphMutationPayload,
+    GraphNextPayload, GraphReleasePayload, GraphSuccessEnvelope, GraphSummarizePayload,
+    is_graph_failure, parse_graph_failure, parse_graph_success,
 };
 use crate::logger::AdapterLogger;
 use crate::task_packet::{
@@ -195,6 +195,180 @@ impl GraphEngineClient {
             }
             Err(e) => {
                 self.log_failure("release", &e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Call `graph-engine heartbeat <task_id> <actor> --ttl-seconds <ttl>`.
+    pub fn heartbeat(
+        &self,
+        task_id: &str,
+        actor: &str,
+        ttl_seconds: u64,
+    ) -> Result<GraphSuccessEnvelope<GraphHeartbeatPayload>, AdapterError> {
+        let args = [
+            "heartbeat",
+            task_id,
+            actor,
+            "--ttl-seconds",
+            &ttl_seconds.to_string(),
+        ];
+        match self.runner.execute(&args) {
+            Ok(raw) => {
+                if is_graph_failure(&raw) {
+                    let failure = parse_graph_failure(&raw)?;
+                    let err = self.normalize_failure(failure, "heartbeat");
+                    self.log_failure("heartbeat", &err);
+                    return Err(err);
+                }
+
+                match parse_graph_success::<GraphHeartbeatPayload>(&raw) {
+                    Ok(envelope) => {
+                        self.log_success("heartbeat");
+                        Ok(envelope)
+                    }
+                    Err(e) => {
+                        self.log_failure("heartbeat", &e);
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => {
+                self.log_failure("heartbeat", &e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Call `graph-engine complete <task_id> <actor> --revision <rev> --result-summary <txt>`.
+    pub fn complete(
+        &self,
+        task_id: &str,
+        actor: &str,
+        revision: u64,
+        summary: &str,
+    ) -> Result<GraphSuccessEnvelope<GraphMutationPayload>, AdapterError> {
+        let args = [
+            "complete",
+            task_id,
+            actor,
+            "--revision",
+            &revision.to_string(),
+            "--result-summary",
+            summary,
+        ];
+        self.execute_mutation("complete", &args)
+    }
+
+    /// Call `graph-engine fail <task_id> <actor> --revision <rev> --failure-reason <txt>`.
+    pub fn fail(
+        &self,
+        task_id: &str,
+        actor: &str,
+        revision: u64,
+        reason: &str,
+    ) -> Result<GraphSuccessEnvelope<GraphMutationPayload>, AdapterError> {
+        let args = [
+            "fail",
+            task_id,
+            actor,
+            "--revision",
+            &revision.to_string(),
+            "--failure-reason",
+            reason,
+        ];
+        self.execute_mutation("fail", &args)
+    }
+
+    /// Call `graph-engine block <task_id> <actor> --revision <rev> --blocked-reason <txt>`.
+    pub fn block(
+        &self,
+        task_id: &str,
+        actor: &str,
+        revision: u64,
+        reason: &str,
+    ) -> Result<GraphSuccessEnvelope<GraphMutationPayload>, AdapterError> {
+        let args = [
+            "block",
+            task_id,
+            actor,
+            "--revision",
+            &revision.to_string(),
+            "--blocked-reason",
+            reason,
+        ];
+        self.execute_mutation("block", &args)
+    }
+
+    /// Call `graph-engine skip <task_id> <actor> --revision <rev> --skip-reason <txt>`.
+    pub fn skip(
+        &self,
+        task_id: &str,
+        actor: &str,
+        revision: u64,
+        reason: &str,
+    ) -> Result<GraphSuccessEnvelope<GraphMutationPayload>, AdapterError> {
+        let args = [
+            "skip",
+            task_id,
+            actor,
+            "--revision",
+            &revision.to_string(),
+            "--skip-reason",
+            reason,
+        ];
+        self.execute_mutation("skip", &args)
+    }
+
+    /// Call `graph-engine cancel <task_id> <actor> --revision <rev> --cancel-reason <txt>`.
+    pub fn cancel(
+        &self,
+        task_id: &str,
+        actor: &str,
+        revision: u64,
+        reason: &str,
+    ) -> Result<GraphSuccessEnvelope<GraphMutationPayload>, AdapterError> {
+        let args = [
+            "cancel",
+            task_id,
+            actor,
+            "--revision",
+            &revision.to_string(),
+            "--cancel-reason",
+            reason,
+        ];
+        self.execute_mutation("cancel", &args)
+    }
+
+    /// Generic mutation executor that handles success/failure/logging for all mutation commands.
+    fn execute_mutation(
+        &self,
+        command: &str,
+        args: &[&str],
+    ) -> Result<GraphSuccessEnvelope<GraphMutationPayload>, AdapterError> {
+        match self.runner.execute(args) {
+            Ok(raw) => {
+                if is_graph_failure(&raw) {
+                    let failure = parse_graph_failure(&raw)?;
+                    let err = self.normalize_failure(failure, command);
+                    self.log_failure(command, &err);
+                    return Err(err);
+                }
+
+                match parse_graph_success::<GraphMutationPayload>(&raw) {
+                    Ok(envelope) => {
+                        self.log_success(command);
+                        Ok(envelope)
+                    }
+                    Err(e) => {
+                        self.log_failure(command, &e);
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => {
+                self.log_failure(command, &e);
                 Err(e)
             }
         }
@@ -790,6 +964,99 @@ mod tests {
         assert_eq!(
             err.error_code(),
             crate::error::AdapterErrorCode::SUMMARIZE_FAILED_AFTER_CLAIM
+        );
+    }
+
+    #[test]
+    fn complete_returns_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "complete t1 agent --revision 5 --result-summary Done",
+            r#"{"status":"success","data":{"node_id":"t1","status":"COMPLETED"}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.complete("t1", "agent", 5, "Done");
+        assert!(result.is_ok());
+        let env = result.unwrap();
+        assert_eq!(env.data.node_id, "t1");
+        assert_eq!(env.data.status, "COMPLETED");
+    }
+
+    #[test]
+    fn fail_returns_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "fail t1 agent --revision 5 --failure-reason broke",
+            r#"{"status":"success","data":{"node_id":"t1","status":"FAILED"}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.fail("t1", "agent", 5, "broke");
+        assert!(result.is_ok());
+        let env = result.unwrap();
+        assert_eq!(env.data.status, "FAILED");
+    }
+
+    #[test]
+    fn block_returns_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "block t1 agent --revision 5 --blocked-reason waiting",
+            r#"{"status":"success","data":{"node_id":"t1","status":"BLOCKED"}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.block("t1", "agent", 5, "waiting");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().data.status, "BLOCKED");
+    }
+
+    #[test]
+    fn skip_returns_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "skip t1 agent --revision 5 --skip-reason obsolete",
+            r#"{"status":"success","data":{"node_id":"t1","status":"SKIPPED"}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.skip("t1", "agent", 5, "obsolete");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().data.status, "SKIPPED");
+    }
+
+    #[test]
+    fn cancel_returns_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "cancel t1 agent --revision 5 --cancel-reason user",
+            r#"{"status":"success","data":{"node_id":"t1","status":"CANCELLED"}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.cancel("t1", "agent", 5, "user");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().data.status, "CANCELLED");
+    }
+
+    #[test]
+    fn heartbeat_returns_success() {
+        let mut runner = MockRunner::new();
+        runner.set_response(
+            "heartbeat t1 agent --ttl-seconds 600",
+            r#"{"status":"success","data":{"node_id":"t1","status":"IN_PROGRESS","actor":"agent","lease_expires_at":"2026-12-31T23:59:59Z"}}"#,
+        );
+
+        let client = GraphEngineClient::new(Box::new(runner));
+        let result = client.heartbeat("t1", "agent", 600);
+        assert!(result.is_ok());
+        let env = result.unwrap();
+        assert_eq!(env.data.node_id, "t1");
+        assert_eq!(env.data.status, "IN_PROGRESS");
+        assert_eq!(
+            env.data.lease_expires_at,
+            Some("2026-12-31T23:59:59Z".to_string())
         );
     }
 }

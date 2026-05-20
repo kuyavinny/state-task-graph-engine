@@ -65,7 +65,24 @@ pub struct GraphReleasePayload {
     pub graph_revision: u64,
 }
 
-/// Deserialize a raw JSON string into a typed graph success envelope.
+/// Payload for the `graph-engine heartbeat` command.
+#[allow(dead_code)] // PR4: used via GraphEngineClient
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GraphHeartbeatPayload {
+    pub node_id: String,
+    pub status: String,
+    pub actor: String,
+    #[serde(default)]
+    pub lease_expires_at: Option<String>,
+}
+
+/// Generic payload for graph-engine mutation commands (complete, fail, block, skip, cancel).
+#[allow(dead_code)] // PR4: used via GraphEngineClient
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GraphMutationPayload {
+    pub node_id: String,
+    pub status: String,
+}
 #[allow(dead_code)] // PR2: used via GraphEngineClient, not yet wired to CLI
 pub fn parse_graph_success<T: serde::de::DeserializeOwned>(
     raw: &str,
