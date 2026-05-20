@@ -91,7 +91,7 @@ fn handle_init_run(
         agent_workflow::run::init_run(&paths, &workflow, &profile, &def)?;
 
     // 5. Log
-    let _ = agent_workflow::log::log_event(
+    agent_workflow::log::log_event(
         &paths,
         "run_initialized",
         &run_id,
@@ -100,7 +100,7 @@ fn handle_init_run(
             "profile": &profile,
             "current_phase": def.phases.first().map(|p| &*p.phase_id),
         }),
-    );
+    )?;
 
     // 6. Return envelope
     let envelope = SuccessEnvelope::with_run(

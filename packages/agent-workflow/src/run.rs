@@ -9,20 +9,57 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// RAII guard that deletes a temporary file on drop unless explicitly released.
+///
+/// Call `release()` after the atomic rename succeeds to prevent cleanup.
+struct TmpFileGuard {
+    path: std::path::PathBuf,
+    released: bool,
+}
+
+impl TmpFileGuard {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            released: false,
+        }
+    }
+    fn release(&mut self) {
+        self.released = true;
+    }
+}
+
+impl Drop for TmpFileGuard {
+    fn drop(&mut self) {
+        if !self.released {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Load / Save
 // ---------------------------------------------------------------------------
 
 /// Load workflow run state from `.agent/workflow_runs/<run_id>/run_state.json`.
 pub fn load_run(paths: &ProjectPaths, run_id: &str) -> Result<WorkflowRunState, ControllerError> {
     let run_state_path = paths.run_state_file(run_id);
-    if !run_state_path.exists() {
-        return Err(ControllerError::UnknownWorkflowError {
-            message: format!("Run '{}' not found", run_id),
-        });
-    }
     let contents = std::fs::read_to_string(&run_state_path).map_err(|e| {
-        ControllerError::UnknownWorkflowError {
-            message: format!("Failed to read run state '{}': {}", run_id, e),
+        let kind = e.kind().to_string();
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ControllerError::UnknownWorkflowError {
+                message: format!("Run '{}' not found", run_id),
+            }
+        } else {
+            ControllerError::UnknownWorkflowError {
+                message: format!(
+                    "Failed to read run state '{}': {} (kind: {})",
+                    run_id, e, kind
+                ),
+            }
         }
     })?;
     let state: WorkflowRunState = serde_json::from_str(&contents).map_err(|e| {
@@ -47,6 +84,7 @@ pub fn save_run_state(
     })?;
 
     let temp_path = run_state_path.with_extension("tmp");
+    let mut guard = TmpFileGuard::new(temp_path.clone());
     std::fs::write(&temp_path, &json).map_err(|e| {
         ControllerError::UnknownWorkflowError {
             message: format!("Failed to write run state '{}': {}", run_id, e),
@@ -57,6 +95,7 @@ pub fn save_run_state(
             message: format!("Failed to finalize run state '{}': {}", run_id, e),
         }
     })?;
+    guard.release();
 
     Ok(())
 }
@@ -81,36 +120,40 @@ pub fn init_run(
         Uuid::new_v4()
     );
 
-    // Create directory structure
+    // Create directory structure. On any failure after the first directory
+    // is created, attempt cleanup of the run directory to avoid partial state.
     std::fs::create_dir_all(paths.run_dir(&run_id)).map_err(|e| {
         ControllerError::UnknownWorkflowError {
             message: format!("Failed to create run dir for '{}': {}", run_id, e),
         }
     })?;
-    std::fs::create_dir_all(paths.task_packets_dir(&run_id)).map_err(|e| {
-        ControllerError::UnknownWorkflowError {
+    if let Err(e) = std::fs::create_dir_all(paths.task_packets_dir(&run_id)) {
+        let _ = std::fs::remove_dir_all(paths.run_dir(&run_id));
+        return Err(ControllerError::UnknownWorkflowError {
             message: format!(
                 "Failed to create task_packets dir for '{}': {}",
                 run_id, e
             ),
-        }
-    })?;
-    std::fs::create_dir_all(paths.result_packets_dir(&run_id)).map_err(|e| {
-        ControllerError::UnknownWorkflowError {
+        });
+    }
+    if let Err(e) = std::fs::create_dir_all(paths.result_packets_dir(&run_id)) {
+        let _ = std::fs::remove_dir_all(paths.run_dir(&run_id));
+        return Err(ControllerError::UnknownWorkflowError {
             message: format!(
                 "Failed to create result_packets dir for '{}': {}",
                 run_id, e
             ),
-        }
-    })?;
-    std::fs::create_dir_all(paths.artifacts_dir(&run_id)).map_err(|e| {
-        ControllerError::UnknownWorkflowError {
+        });
+    }
+    if let Err(e) = std::fs::create_dir_all(paths.artifacts_dir(&run_id)) {
+        let _ = std::fs::remove_dir_all(paths.run_dir(&run_id));
+        return Err(ControllerError::UnknownWorkflowError {
             message: format!(
                 "Failed to create artifacts dir for '{}': {}",
                 run_id, e
             ),
-        }
-    })?;
+        });
+    }
 
     let first_phase = workflow.phases.first().ok_or_else(|| {
         ControllerError::InvalidWorkflowDefinition {
@@ -393,5 +436,51 @@ mod tests {
         let state = load_run(&paths, &run_id).expect("load_run");
         // State must NOT have changed (cancel was rejected)
         assert_eq!(state.phase_status, PhaseStatus::Waiting);
+    }
+
+    #[test]
+    fn test_save_run_state_no_orphan_temp() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let paths = ProjectPaths::from_root(tmp.path().to_path_buf());
+        let workflow = dummy_workflow();
+
+        let run_id = init_run(&paths, &workflow.workflow_id, "default", &workflow).expect("init_run");
+
+        let tmp_path = paths.run_state_file(&run_id).with_extension("tmp");
+        assert!(
+            !tmp_path.exists(),
+            "tmp file should not exist after successful save_run_state"
+        );
+    }
+
+    #[test]
+    fn test_load_run_error_includes_kind() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let paths = ProjectPaths::from_root(tmp.path().to_path_buf());
+
+        // Make the run state file a directory so read_to_string fails with non-NotFound error
+        let run_id = "test_run";
+        let run_state_path = paths.run_state_file(run_id);
+        std::fs::create_dir_all(&run_state_path).expect("create dir as run state file");
+
+        let result = load_run(&paths, run_id);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.message();
+        assert!(
+            msg.contains("kind:"),
+            "Error message should include error kind: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_init_run_rollback_on_partial_failure() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let paths = ProjectPaths::from_root(tmp.path().to_path_buf());
+        let workflow = dummy_workflow();
+
+        let run_id = init_run(&paths, &workflow.workflow_id, "default", &workflow).expect("init_run");
+        assert!(paths.run_dir(&run_id).exists());
     }
 }
