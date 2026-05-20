@@ -27,6 +27,7 @@
 //! - `config`: Version and configuration constants.
 
 pub mod adapter_client;
+pub mod approval;
 pub mod cli;
 pub mod config;
 pub mod criteria;
