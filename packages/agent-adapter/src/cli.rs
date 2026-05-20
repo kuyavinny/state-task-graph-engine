@@ -313,7 +313,23 @@ fn submit_result(
 
     // Build packet from file or convenience flags
     let mut packet = if let Some(path) = result_file {
-        let content = std::fs::read_to_string(path)?;
+        // Normalize path to prevent traversal outside the project directory
+        let canonical =
+            std::fs::canonicalize(path).map_err(|e| AdapterError::InvalidResultPacket {
+                message: format!("result-file path '{}' could not be resolved: {}", path, e),
+            })?;
+        let cwd = std::env::current_dir().map_err(|e| AdapterError::InvalidResultPacket {
+            message: format!("failed to get working directory: {}", e),
+        })?;
+        if !canonical.starts_with(&cwd) {
+            return Err(AdapterError::InvalidResultPacket {
+                message: format!(
+                    "result-file path '{}' resolves outside the project directory",
+                    path
+                ),
+            });
+        }
+        let content = std::fs::read_to_string(&canonical)?;
         serde_yaml::from_str::<CanonicalResultPacket>(&content)?
     } else {
         CanonicalResultPacket {
