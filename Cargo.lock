@@ -36,6 +36,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-workflow"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
