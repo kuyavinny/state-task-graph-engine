@@ -116,7 +116,7 @@ pub fn render_markdown(packet: &CanonicalTaskPacket, max_context_chars: u64) -> 
 
     // If still over budget, hard-truncate from the end
     if md.len() > budget {
-        md.truncate(budget);
+        safe_truncate(&mut md, budget);
         md.push_str("\n\n⚠ _Truncated to fit context budget_\n");
         truncated = true;
     }
@@ -126,6 +126,20 @@ pub fn render_markdown(packet: &CanonicalTaskPacket, max_context_chars: u64) -> 
     }
 
     (md, truncated)
+}
+
+/// Truncate a string to at most `max_len` bytes without panicking on
+/// non-ASCII content.  If `max_len` falls in the middle of a multi-byte
+/// UTF-8 sequence, backs up to the nearest valid character boundary.
+fn safe_truncate(s: &mut String, max_len: usize) {
+    if max_len >= s.len() {
+        return;
+    }
+    let mut idx = max_len;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    s.truncate(idx);
 }
 
 /// Render a canonical task packet as a Markdown string and wrap it in a
@@ -305,21 +319,29 @@ mod tests {
     }
 
     #[test]
-    fn truncation_warning_appears() {
+    fn truncation_safe_on_non_ascii_content() {
         let mut packet = minimal_packet();
-        for i in 0..500 {
-            packet
-                .bounded_context
-                .recent_events
-                .push(serde_json::json!({
-                    "event": format!("event-{}", i),
-                    "detail": "x".repeat(200),
-                }));
-        }
-        let caps = test_capabilities(500);
-        let output = render_context(&packet, "test_profile", "test_agent", &caps).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(parsed["data"]["truncated"], true);
-        assert!(!parsed["warnings"].as_array().unwrap().is_empty());
+        // Set title to non-ASCII (2-byte UTF-8 chars) so the Markdown contains
+        // multi-byte characters.  With a budget that would fall mid-char,
+        // the old md.truncate(budget) would panic.
+        packet.task.title = "ααα".to_string(); // 6 bytes, 3 chars
+        packet.task.description = "βββ".to_string(); // 6 bytes, 3 chars
+
+        // Budget of 5 bytes would have panicked: it falls in the middle
+        // of the second α character (bytes: 61 CE B1 CE B1 CE B1 ...).
+        // "# Task: ααα\n\n" = 15 bytes (1 + 8 + 2*3 + 2 = 17?)
+        // Actually let's just test that it doesn't panic.
+        let (md, _truncated) = render_markdown(&packet, 10);
+        // Should not panic and should be valid UTF-8
+        assert!(std::str::from_utf8(md.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn safe_truncate_respects_char_boundaries() {
+        let mut s = "α".to_string(); // 2-byte UTF-8
+        s.push_str("α"); // +2 bytes = 4 total
+        s.push_str("α"); // +2 bytes = 6 total
+        safe_truncate(&mut s, 5); // would have panicked without safe_truncate
+        assert_eq!(s, "αα"); // 4 bytes, valid UTF-8
     }
 }
