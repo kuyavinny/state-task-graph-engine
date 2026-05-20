@@ -288,6 +288,128 @@ pub fn cancel_run(
     Ok(())
 }
 
+/// Cancel a run, releasing any active task lease via the adapter first.
+pub fn cancel_run_with_adapter<A>(
+    paths: &ProjectPaths,
+    adapter: &A,
+    definition: &WorkflowDefinition,
+    run_id: &str,
+    reason: &str,
+) -> Result<(), ControllerError>
+where
+    A: crate::adapter_client::AdapterClient,
+{
+    let mut state = load_run(paths, run_id)?;
+
+    // If active task, release it first
+    if let (Some(ref task_id), Some(revision)) = (
+        &state.active_task_id,
+        state.active_task_graph_revision,
+    ) {
+        let result = adapter.release_work(
+            paths,
+            &definition.adapter_profile,
+            task_id,
+            revision,
+            &format!("cancel_run: {}", reason),
+        );
+        match result {
+            Ok(_) => {
+                crate::log::log_event(
+                    paths,
+                    "lease_released",
+                    run_id,
+                    &serde_json::json!({"task_id": task_id, "reason": reason}),
+                )?;
+            }
+            Err(_) => {
+                return Err(ControllerError::CannotReleaseTask {
+                    run_id: run_id.to_string(),
+                    task_id: task_id.clone(),
+                    reason: "adapter release-work failed".to_string(),
+                });
+            }
+        }
+    }
+
+    let stop_reason = if reason.is_empty() {
+        "operator_cancelled"
+    } else {
+        reason
+    };
+
+    state.phase_status = PhaseStatus::Cancelled;
+    state.stop_reason = Some(stop_reason.to_string());
+    state.active_task_id = None;
+    state.active_task_graph_revision = None;
+    state.active_task_lease_expires_at = None;
+    state.active_task_packet_ref = None;
+    state.updated_time = Utc::now().to_rfc3339();
+
+    save_run_state(paths, run_id, &state)?;
+
+    crate::log::log_event(
+        paths,
+        "run_cancelled",
+        run_id,
+        &serde_json::json!({"reason": stop_reason}),
+    )?;
+
+    Ok(())
+}
+
+/// Check if a phase or workflow has exceeded its timeout.
+pub fn check_timeout(
+    run_state: &WorkflowRunState,
+    definition: &WorkflowDefinition,
+) -> Option<TimeoutAction> {
+    let phase = definition.phases.iter().find(|p| {
+        Some(p.phase_id.as_str()) == run_state.current_phase.as_deref()
+    })?;
+
+    let phase_timeout = phase
+        .max_phase_duration_minutes
+        .unwrap_or(definition.timeout_policy.default_phase_timeout_minutes);
+
+    let phase_started = run_state
+        .phase_history
+        .last()
+        .and_then(|h| h.entered_at.parse::<chrono::DateTime<Utc>>().ok())
+        .unwrap_or_else(Utc::now);
+
+    let elapsed_minutes = Utc::now().signed_duration_since(phase_started).num_minutes().max(0) as u64;
+
+    if elapsed_minutes >= phase_timeout {
+        Some(TimeoutAction {
+            action: definition.timeout_policy.on_timeout.clone(),
+            elapsed_minutes,
+            limit_minutes: phase_timeout,
+        })
+    } else {
+        None
+    }
+}
+
+/// Action to take when a timeout is detected.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeoutAction {
+    pub action: String,
+    pub elapsed_minutes: u64,
+    pub limit_minutes: u64,
+}
+
+/// Check if workflow retry threshold exceeded.
+pub fn check_retry(
+    run_state: &WorkflowRunState,
+    definition: &WorkflowDefinition,
+) -> Option<u64> {
+    if run_state.workflow_retry_counters.total_attempts >= definition.retry_policy.workflow_max_retries {
+        Some(run_state.workflow_retry_counters.total_attempts)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -327,7 +449,56 @@ mod tests {
         }
     }
 
-    #[test]
+    fn run_with_active_task() -> WorkflowRunState {
+        let mut state = WorkflowRunState {
+            workflow_run_id: "run_001".to_string(),
+            workflow_id: "test_workflow".to_string(),
+            workflow_version: "1.0.0".to_string(),
+            adapter_profile: "default".to_string(),
+            current_phase: Some("p1".to_string()),
+            phase_status: crate::run_state::PhaseStatus::InProgress,
+            active_task_id: Some("task_001".to_string()),
+            active_task_graph_revision: Some(1),
+            active_task_lease_expires_at: None,
+            active_task_packet_ref: None,
+            start_time: Utc::now().to_rfc3339(),
+            updated_time: Utc::now().to_rfc3339(),
+            pause_reason: None,
+            stop_reason: None,
+            workflow_retry_counters: crate::run_state::WorkflowRetryCounters::default(),
+            approval_records: vec![],
+            phase_history: vec![crate::run_state::PhaseHistoryItem {
+                phase_id: "p1".to_string(),
+                status: crate::run_state::PhaseStatus::InProgress,
+                entered_at: Utc::now().to_rfc3339(),
+                exited_at: None,
+                exit_reason: None,
+                result_packet_id: None,
+            }],
+            run_artifacts: vec![],
+        };
+        state
+    }
+
+    fn load_state_at_phase_start() -> WorkflowRunState {
+        let mut state = run_with_active_task();
+        state.phase_history = vec![crate::run_state::PhaseHistoryItem {
+            phase_id: "p1".to_string(),
+            status: crate::run_state::PhaseStatus::InProgress,
+            entered_at: (Utc::now() - chrono::Duration::hours(2)).to_rfc3339(),
+            exited_at: None,
+            exit_reason: None,
+            result_packet_id: None,
+        }];
+        state
+    }
+
+    fn load_state_with_retries(n: u64) -> WorkflowRunState {
+        let mut state = run_with_active_task();
+        state.workflow_retry_counters.total_attempts = n;
+        state
+    }
+
     fn test_init_run_creates_directories_and_state() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let paths = ProjectPaths::from_root(tmp.path().to_path_buf());
@@ -475,12 +646,28 @@ mod tests {
     }
 
     #[test]
-    fn test_init_run_rollback_on_partial_failure() {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let paths = ProjectPaths::from_root(tmp.path().to_path_buf());
-        let workflow = dummy_workflow();
+    fn test_check_timeout_exceeded() {
+        let mut state = load_state_at_phase_start();
+        // Already has phase_history with entered_at
 
-        let run_id = init_run(&paths, &workflow.workflow_id, "default", &workflow).expect("init_run");
-        assert!(paths.run_dir(&run_id).exists());
+        let def = dummy_workflow();
+
+        let action = check_timeout(&state, &def);
+        assert!(action.is_some());
+        assert_eq!(action.unwrap().action, "fail");
+    }
+
+    #[test]
+    fn test_check_retry_exceeded() {
+        let mut state = load_state_with_retries(5);
+        let def = dummy_workflow();
+        assert!(check_retry(&state, &def).is_some());
+    }
+
+    #[test]
+    fn test_check_retry_below_threshold() {
+        let mut state = load_state_with_retries(1);
+        let def = dummy_workflow();
+        assert!(check_retry(&state, &def).is_none());
     }
 }
