@@ -88,6 +88,12 @@ pub enum Commands {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Render a task as Markdown suitable for LLM context windows
+    RenderContext {
+        /// Profile name to use for actor resolution
+        #[arg(long)]
+        profile: String,
+    },
 }
 
 /// Directory for adapter-owned files relative to the project root.
@@ -133,6 +139,7 @@ impl Cli {
                 revision,
                 reason,
             } => release_work(&profile, &task_id, revision, reason.as_deref()),
+            Commands::RenderContext { profile } => render_context_cmd(&profile),
         }
     }
 }
@@ -573,6 +580,32 @@ fn build_client(config: &AdapterConfig, actor: &str) -> Result<GraphEngineClient
         logger,
         actor,
     ))
+}
+
+/// Render a task as Markdown for LLM context windows.
+///
+/// 1. Load config and profile.
+/// 2. Call `get_work` to obtain a canonical task packet.
+/// 3. Render as Markdown within `max_context_chars`.
+/// 4. Output JSON envelope with `format: markdown`, `content`, and `truncated`.
+fn render_context_cmd(profile_name: &str) -> Result<(), AdapterError> {
+    let (config, profile, actor) = load_profile(profile_name)?;
+
+    if !profile.permissions.allow_claim {
+        return Err(AdapterError::ProfilePermissionDenied {
+            message: format!(
+                "profile '{}' does not have allow_claim permission",
+                profile_name
+            ),
+        });
+    }
+
+    let client = build_client(&config, &actor)?;
+    let packet = client.get_work(&actor)?;
+    let output =
+        crate::render::render_context(&packet, profile_name, &actor, &profile.capabilities)?;
+    println!("{}", output);
+    Ok(())
 }
 
 #[cfg(test)]
