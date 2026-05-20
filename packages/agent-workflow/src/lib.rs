@@ -29,6 +29,7 @@
 pub mod adapter_client;
 pub mod cli;
 pub mod config;
+pub mod criteria;
 pub mod criteria_context;
 pub mod error;
 pub mod graph_client;
@@ -47,6 +48,9 @@ pub use adapter_client::{
 };
 pub use cli::Cli;
 pub use config::version;
+pub use criteria::{
+    evaluate_criteria, evaluate_one, CriterionResult, EvaluationContext, EvaluationResult,
+};
 pub use criteria_context::CriteriaContext;
 pub use error::ControllerError;
 pub use graph_client::{
