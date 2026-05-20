@@ -50,6 +50,7 @@ pub mod verification;
 pub use adapter_client::{
     AdapterClient, RealAdapterClient, ReleaseResult, RenderResult, SubmitResult, TaskPacket,
 };
+pub use adapter_client::mock::MockAdapterClient;
 pub use cli::Cli;
 pub use config::version;
 pub use criteria::{
@@ -60,6 +61,7 @@ pub use error::ControllerError;
 pub use graph_client::{
     GraphStatusClient, GraphValidationResult, RealGraphStatusClient,
 };
+pub use graph_client::mock::MockGraphStatusClient;
 pub use model::{
     ArtifactCriterion, Criterion, GraphStateCriterion, OperatorApprovalCriterion, Phase,
     ResultCriterion, TimeCriterion, WorkflowDefinition,

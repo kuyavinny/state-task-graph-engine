@@ -105,6 +105,29 @@ where
         }
     }
 
+    // 3.5 Check verification
+    crate::verification::check_verification(phase, run_state)?;
+
+    // 3.6 Check approval gate
+    if phase.operator_approval_required {
+        let approved = run_state.approval_records.iter().any(|r| {
+            r.phase_id == phase_id && r.decision == crate::run_state::ApprovalDecision::Approved
+        });
+        if !approved {
+            run_state.phase_status = PhaseStatus::Paused;
+            run_state.pause_reason = Some("Awaiting operator approval".to_string());
+            crate::run::save_run_state(paths, &run_state.workflow_run_id, run_state)
+                .map_err(|e| ControllerError::UnknownWorkflowError {
+                    message: format!("Failed to save paused state: {}", e),
+                })?;
+            return Err(ControllerError::WorkflowPaused {
+                run_id: run_state.workflow_run_id.clone(),
+                phase_id,
+                pause_reason: "Awaiting operator approval".to_string(),
+            });
+        }
+    }
+
     // 4. Active task already present?
     if let Some(ref active) = run_state.active_task_id {
         return Ok(DispatchOutcome::AwaitingResult {

@@ -223,13 +223,18 @@ pub fn find_in_path(name: &str) -> Option<PathBuf> {
 // Mock implementation for tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
 pub mod mock {
     use super::*;
 
     pub struct MockGraphStatusClient {
         pub status_result: Result<CriteriaContext, ControllerError>,
         pub validate_result: Result<GraphValidationResult, ControllerError>,
+    }
+
+    impl Default for MockGraphStatusClient {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl MockGraphStatusClient {

@@ -456,7 +456,6 @@ impl AdapterClient for RealAdapterClient {
 // Mock implementation for tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
 pub mod mock {
     use super::*;
 
@@ -467,6 +466,12 @@ pub mod mock {
         pub render_context_result: Result<RenderResult, ControllerError>,
         pub validate_profile_result: Result<(), ControllerError>,
         pub heartbeat_result: Result<(), ControllerError>,
+    }
+
+    impl Default for MockAdapterClient {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl MockAdapterClient {
