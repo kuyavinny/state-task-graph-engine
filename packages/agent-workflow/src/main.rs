@@ -45,57 +45,131 @@ fn main() {
     }
 }
 
-// ── Stub handlers (PR 1: return NOT_IMPLEMENTED) ────────────────────────
+// ── Handlers ─────────────────────────────────────────────────────────────
 
 fn handle_init_run(
-    _workflow: String,
-    _profile: String,
+    workflow: String,
+    profile: String,
     _actor: String,
     _ttl_seconds: Option<u64>,
 ) -> Result<String, ControllerError> {
-    let envelope = FailureEnvelope::not_implemented("init-run");
+    let paths = ProjectPaths::discover()?;
+
+    // 1. Validate path safety
+    paths::validate_id(&workflow)?;
+
+    // 2. Load workflow definition
+    let def = {
+        let yaml_path = paths.workflow_yaml(&workflow);
+        let json_path = paths.workflow_json(&workflow);
+        if yaml_path.exists() {
+            WorkflowDefinition::from_yaml_file(&yaml_path)?
+        } else if json_path.exists() {
+            WorkflowDefinition::from_json_file(&json_path)?
+        } else {
+            return Err(ControllerError::WorkflowDefinitionNotFound {
+                workflow_id: workflow.clone(),
+            });
+        }
+    };
+
+    // Verify workflow_id matches file
+    if def.workflow_id != workflow {
+        return Err(ControllerError::InvalidWorkflowDefinition {
+            message: format!(
+                "Workflow file for '{}' contains workflow_id '{}'. Mismatch.",
+                workflow, def.workflow_id
+            ),
+        });
+    }
+
+    // 3. Validate definition
+    validate_workflow_definition(&def)?;
+
+    // 4. Initialize run
+    let run_id =
+        agent_workflow::run::init_run(&paths, &workflow, &profile, &def)?;
+
+    // 5. Log
+    agent_workflow::log::log_event(
+        &paths,
+        "run_initialized",
+        &run_id,
+        &serde_json::json!({
+            "workflow_id": &workflow,
+            "profile": &profile,
+            "current_phase": def.phases.first().map(|p| &*p.phase_id),
+        }),
+    )?;
+
+    // 6. Return envelope
+    let envelope = SuccessEnvelope::with_run(
+        &run_id,
+        "Workflow run initialized. Use 'agent-workflow step --run-id <run_id>' to begin.",
+    );
     Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
 }
 
-fn handle_step(
-    _run_id: String,
-    _result_file: Option<String>,
-    _approve: Option<String>,
-    _reason: String,
-    _yes: bool,
-) -> Result<String, ControllerError> {
-    let envelope = FailureEnvelope::not_implemented("step");
+fn handle_status(run_id: String) -> Result<String, ControllerError> {
+    let paths = ProjectPaths::discover()?;
+    paths::validate_id(&run_id)?;
+
+    let state = agent_workflow::run::load_run(&paths, &run_id)?;
+    let envelope = SuccessEnvelope::with_run(
+        &run_id,
+        &format!(
+            "Phase: {} ({:?}), active_task_id: {}",
+            state.current_phase.as_deref().unwrap_or("none"),
+            state.phase_status,
+            state.active_task_id.as_deref().unwrap_or("none")
+        ),
+    );
     Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
 }
 
-fn handle_status(_run_id: String) -> Result<String, ControllerError> {
-    let envelope = FailureEnvelope::not_implemented("status");
+fn handle_list_runs(workflow: Option<String>) -> Result<String, ControllerError> {
+    let paths = ProjectPaths::discover()?;
+    let runs = agent_workflow::run::list_runs(&paths, workflow.as_deref())?;
+    let envelope = SuccessEnvelope {
+        ok: true,
+        workflow: None,
+        run_id: None,
+        current_phase: None,
+        phase_status: None,
+        message: Some(format!("Found {} run(s)", runs.len())),
+    };
     Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
 }
 
-fn handle_list_runs(_workflow: Option<String>) -> Result<String, ControllerError> {
-    let envelope = FailureEnvelope::not_implemented("list-runs");
+fn handle_show_phase(run_id: String) -> Result<String, ControllerError> {
+    let paths = ProjectPaths::discover()?;
+    paths::validate_id(&run_id)?;
+
+    let info = agent_workflow::phase::show_phase(&paths, &run_id)?;
+    let envelope = SuccessEnvelope::new(&format!(
+        "Phase: {} ({:?}) — operator_approval_required: {}",
+        info.current_phase_id,
+        info.phase_status,
+        info.operator_approval_required,
+    ));
     Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
 }
 
-fn handle_cancel_run(_run_id: String, _reason: String) -> Result<String, ControllerError> {
-    let envelope = FailureEnvelope::not_implemented("cancel-run");
-    Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
-}
+fn handle_cancel_run(run_id: String, reason: String) -> Result<String, ControllerError> {
+    let paths = ProjectPaths::discover()?;
+    paths::validate_id(&run_id)?;
 
-fn handle_show_phase(_run_id: String) -> Result<String, ControllerError> {
-    let envelope = FailureEnvelope::not_implemented("show-phase");
+    agent_workflow::run::cancel_run(&paths, &run_id, &reason)?;
+    let envelope = SuccessEnvelope::new(&format!("Run '{}' cancelled.", &run_id),
+    );
     Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
 }
 
 fn handle_validate(workflow: String) -> Result<String, ControllerError> {
-    // 1. Discover project root
     let paths = ProjectPaths::discover()?;
 
-    // 2. Validate workflow_id for path safety
     paths::validate_id(&workflow)?;
 
-    // 3. Load definition: try .yml first, then .json
     let yaml_path = paths.workflow_yaml(&workflow);
     let json_path = paths.workflow_json(&workflow);
 
@@ -109,7 +183,6 @@ fn handle_validate(workflow: String) -> Result<String, ControllerError> {
         });
     };
 
-    // 4. Verify workflow_id in file matches the CLI argument
     if def.workflow_id != workflow {
         return Err(ControllerError::InvalidWorkflowDefinition {
             message: format!(
@@ -119,13 +192,22 @@ fn handle_validate(workflow: String) -> Result<String, ControllerError> {
         });
     }
 
-    // 5. Run structural validation
     validate_workflow_definition(&def)?;
 
-    // 6. Return success envelope
     let envelope = SuccessEnvelope::new(&format!(
         "Workflow definition '{}' is valid.",
         &def.workflow_id
     ));
+    Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
+}
+
+fn handle_step(
+    _run_id: String,
+    _result_file: Option<String>,
+    _approve: Option<String>,
+    _reason: String,
+    _yes: bool,
+) -> Result<String, ControllerError> {
+    let envelope = FailureEnvelope::not_implemented("step");
     Ok(serde_json::to_string_pretty(&envelope).expect("valid json"))
 }

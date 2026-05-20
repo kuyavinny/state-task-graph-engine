@@ -29,9 +29,12 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod log;
 pub mod model;
 pub mod paths;
+pub mod phase;
 pub mod response;
+pub mod run;
 pub mod run_state;
 pub mod validate;
 
@@ -44,7 +47,9 @@ pub use model::{
     ResultCriterion, TimeCriterion, WorkflowDefinition,
 };
 pub use paths::ProjectPaths;
+pub use phase::PhaseInfo;
 pub use response::{FailureEnvelope, SuccessEnvelope};
+pub use run::RunSummary;
 pub use run_state::{
     ApprovalDecision, ApprovalRecord, PhaseHistoryItem, PhaseStatus, RunArtifact,
     WorkflowRetryCounters, WorkflowRunState,
