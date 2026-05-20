@@ -6,6 +6,7 @@ mod graph_runner;
 mod graph_types;
 mod logger;
 mod response;
+mod result_packet;
 mod task_packet;
 
 use clap::Parser;
