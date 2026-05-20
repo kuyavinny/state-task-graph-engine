@@ -156,23 +156,19 @@ impl GraphEngineClient {
         }
     }
 
-    /// Call `graph-engine release <task_id> <actor> --revision <rev>` and return the result.
+    /// Call `graph-engine release <task_id> <actor>` and return the result.
     ///
-    /// Attempts best-effort release of a claimed task.  The caller decides
-    /// whether the release is critical or advisory.
+    /// **Note:** The spec prescribes `--revision`, but the current `agent-graph` CLI
+    /// does not accept it for `release`.  The argument is kept in the signature
+    /// for forward-compatibility but is intentionally **not** forwarded to the
+    /// subprocess until the graph engine adds support.
     pub fn release(
         &self,
         task_id: &str,
         actor: &str,
-        revision: u64,
+        _revision: u64,
     ) -> Result<GraphSuccessEnvelope<GraphReleasePayload>, AdapterError> {
-        let args = [
-            "release",
-            task_id,
-            actor,
-            "--revision",
-            &revision.to_string(),
-        ];
+        let args = ["release", task_id, actor];
         match self.runner.execute(&args) {
             Ok(raw) => {
                 if is_graph_failure(&raw) {
@@ -837,7 +833,7 @@ mod tests {
     fn release_returns_success() {
         let mut runner = MockRunner::new();
         runner.set_response(
-            "release t1 test-agent --revision 43",
+            "release t1 test-agent",
             r#"{"status":"success","data":{"released":true,"task_id":"t1","graph_revision":44}}"#,
         );
 
@@ -924,7 +920,7 @@ mod tests {
             r#"{"status":"failure","code":"NOT_FOUND","message":"task t1 not found"}"#,
         );
         runner.set_response(
-            "release t1 test-agent --revision 43",
+            "release t1 test-agent",
             r#"{"status":"success","data":{"released":true,"task_id":"t1","graph_revision":44}}"#,
         );
 
