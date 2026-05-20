@@ -199,9 +199,7 @@ mod tests {
             reparsed.active_task_packet_ref,
             state.active_task_packet_ref
         );
-        assert_eq!(
-            reparsed.workflow_retry_counters.total_attempts, 2
-        );
+        assert_eq!(reparsed.workflow_retry_counters.total_attempts, 2);
         assert_eq!(reparsed.approval_records.len(), 1);
         assert_eq!(
             reparsed.approval_records[0].decision,

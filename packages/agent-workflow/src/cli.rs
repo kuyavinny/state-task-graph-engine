@@ -8,10 +8,12 @@ use clap::{Parser, Subcommand};
 #[command(name = "agent-workflow")]
 #[command(version)]
 #[command(about = "Workflow & Harness Controller for agent-system-os")]
-#[command(long_about = "Module 3: Single-agent supervised control-plane that loads \
+#[command(
+    long_about = "Module 3: Single-agent supervised control-plane that loads \
     declarative workflow definitions, manages durable per-run state, enforces \
     phase entry/exit criteria and approval gates, and routes all task mutations \
-    through Module 2 (agent-adapter).")]
+    through Module 2 (agent-adapter)."
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -112,12 +114,20 @@ mod tests {
         let cli = Cli::try_parse_from([
             "agent-workflow",
             "init-run",
-            "--workflow", "my_workflow",
-            "--profile", "full_exec_agent",
-        ]).expect("parse init-run");
+            "--workflow",
+            "my_workflow",
+            "--profile",
+            "full_exec_agent",
+        ])
+        .expect("parse init-run");
 
         match cli.command {
-            Commands::InitRun { workflow, profile, actor, ttl_seconds } => {
+            Commands::InitRun {
+                workflow,
+                profile,
+                actor,
+                ttl_seconds,
+            } => {
                 assert_eq!(workflow, "my_workflow");
                 assert_eq!(profile, "full_exec_agent");
                 assert_eq!(actor, "operator");
@@ -129,14 +139,17 @@ mod tests {
 
     #[test]
     fn test_cli_parse_step_dispatch() {
-        let cli = Cli::try_parse_from([
-            "agent-workflow",
-            "step",
-            "--run-id", "run_123",
-        ]).expect("parse step dispatch");
+        let cli = Cli::try_parse_from(["agent-workflow", "step", "--run-id", "run_123"])
+            .expect("parse step dispatch");
 
         match cli.command {
-            Commands::Step { run_id, result_file, approve, reason: _, yes } => {
+            Commands::Step {
+                run_id,
+                result_file,
+                approve,
+                reason: _,
+                yes,
+            } => {
                 assert_eq!(run_id, "run_123");
                 assert_eq!(result_file, None);
                 assert_eq!(approve, None);
@@ -151,9 +164,12 @@ mod tests {
         let cli = Cli::try_parse_from([
             "agent-workflow",
             "step",
-            "--run-id", "run_123",
-            "--result-file", "/tmp/result.json",
-        ]).expect("parse step with result");
+            "--run-id",
+            "run_123",
+            "--result-file",
+            "/tmp/result.json",
+        ])
+        .expect("parse step with result");
 
         match cli.command {
             Commands::Step { result_file, .. } => {
@@ -168,13 +184,19 @@ mod tests {
         let cli = Cli::try_parse_from([
             "agent-workflow",
             "step",
-            "--run-id", "run_123",
-            "--approve", "APPROVED",
-            "--reason", "Looks good",
-        ]).expect("parse step with approval");
+            "--run-id",
+            "run_123",
+            "--approve",
+            "APPROVED",
+            "--reason",
+            "Looks good",
+        ])
+        .expect("parse step with approval");
 
         match cli.command {
-            Commands::Step { approve, reason, .. } => {
+            Commands::Step {
+                approve, reason, ..
+            } => {
                 assert_eq!(approve, Some("APPROVED".to_string()));
                 assert_eq!(reason, "Looks good");
             }
@@ -184,11 +206,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_status() {
-        let cli = Cli::try_parse_from([
-            "agent-workflow",
-            "status",
-            "--run-id", "run_123",
-        ]).expect("parse status");
+        let cli = Cli::try_parse_from(["agent-workflow", "status", "--run-id", "run_123"])
+            .expect("parse status");
 
         match cli.command {
             Commands::Status { run_id } => {
@@ -200,11 +219,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_list_runs() {
-        let cli = Cli::try_parse_from([
-            "agent-workflow",
-            "list-runs",
-            "--workflow", "my_workflow",
-        ]).expect("parse list-runs");
+        let cli = Cli::try_parse_from(["agent-workflow", "list-runs", "--workflow", "my_workflow"])
+            .expect("parse list-runs");
 
         match cli.command {
             Commands::ListRuns { workflow } => {
@@ -219,9 +235,12 @@ mod tests {
         let cli = Cli::try_parse_from([
             "agent-workflow",
             "cancel-run",
-            "--run-id", "run_123",
-            "--reason", "Wrong workflow",
-        ]).expect("parse cancel-run");
+            "--run-id",
+            "run_123",
+            "--reason",
+            "Wrong workflow",
+        ])
+        .expect("parse cancel-run");
 
         match cli.command {
             Commands::CancelRun { run_id, reason } => {
@@ -234,11 +253,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_show_phase() {
-        let cli = Cli::try_parse_from([
-            "agent-workflow",
-            "show-phase",
-            "--run-id", "run_123",
-        ]).expect("parse show-phase");
+        let cli = Cli::try_parse_from(["agent-workflow", "show-phase", "--run-id", "run_123"])
+            .expect("parse show-phase");
 
         match cli.command {
             Commands::ShowPhase { run_id } => {
@@ -250,11 +266,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_validate() {
-        let cli = Cli::try_parse_from([
-            "agent-workflow",
-            "validate",
-            "--workflow", "my_workflow",
-        ]).expect("parse validate");
+        let cli = Cli::try_parse_from(["agent-workflow", "validate", "--workflow", "my_workflow"])
+            .expect("parse validate");
 
         match cli.command {
             Commands::Validate { workflow } => {

@@ -51,7 +51,8 @@ impl ProjectPaths {
 
         let root = discover_project_root(&cwd).ok_or_else(|| {
             crate::error::ControllerError::UnknownWorkflowError {
-                message: "Cannot find project root (no .git/ or workspace Cargo.toml found)".to_string(),
+                message: "Cannot find project root (no .git/ or workspace Cargo.toml found)"
+                    .to_string(),
             }
         })?;
 
@@ -146,13 +147,6 @@ pub fn validate_id(id: &str) -> Result<(), crate::error::ControllerError> {
         });
     }
 
-    // Reject absolute paths
-    if id.starts_with('/') || id.starts_with('\\') {
-        return Err(crate::error::ControllerError::UnknownWorkflowError {
-            message: format!("ID '{}' must not be an absolute path", id),
-        });
-    }
-
     // Reject path separators and traversal patterns
     if id.contains('/') || id.contains('\\') || id.contains("..") {
         return Err(crate::error::ControllerError::UnknownWorkflowError {
@@ -187,14 +181,18 @@ mod tests {
             paths.workflow_json("my_workflow"),
             tmp.path().join(".agent/workflows/my_workflow.json")
         );
-        assert_eq!(paths.workflow_runs_dir(), tmp.path().join(".agent/workflow_runs"));
+        assert_eq!(
+            paths.workflow_runs_dir(),
+            tmp.path().join(".agent/workflow_runs")
+        );
         assert_eq!(
             paths.run_dir("run_123"),
             tmp.path().join(".agent/workflow_runs/run_123")
         );
         assert_eq!(
             paths.run_state_file("run_123"),
-            tmp.path().join(".agent/workflow_runs/run_123/run_state.json")
+            tmp.path()
+                .join(".agent/workflow_runs/run_123/run_state.json")
         );
         assert_eq!(
             paths.task_packets_dir("run_123"),
@@ -202,7 +200,8 @@ mod tests {
         );
         assert_eq!(
             paths.result_packets_dir("run_123"),
-            tmp.path().join(".agent/workflow_runs/run_123/result_packets")
+            tmp.path()
+                .join(".agent/workflow_runs/run_123/result_packets")
         );
         assert_eq!(
             paths.artifacts_dir("run_123"),

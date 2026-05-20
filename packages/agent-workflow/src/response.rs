@@ -46,7 +46,13 @@ impl SuccessEnvelope {
         }
     }
 
-    pub fn with_workflow(workflow: &str, run_id: &str, current_phase: &str, phase_status: &str, message: &str) -> Self {
+    pub fn with_workflow(
+        workflow: &str,
+        run_id: &str,
+        current_phase: &str,
+        phase_status: &str,
+        message: &str,
+    ) -> Self {
         Self {
             ok: true,
             workflow: Some(workflow.to_string()),
