@@ -14,11 +14,17 @@ pub enum ControllerError {
     InvalidWorkflowDefinition { message: String },
 
     /// Workflow definition contains a `future_hook` or unknown criterion type.
-    UnsupportedCriterion { phase_id: String, criterion_type: String },
+    UnsupportedCriterion {
+        phase_id: String,
+        criterion_type: String,
+    },
 
     // ── Run state errors ──────────────────────────────────────────
     /// Cannot step a run that is COMPLETED, FAILED, or CANCELLED.
-    WorkflowAlreadyStopped { run_id: String, phase_status: String },
+    WorkflowAlreadyStopped {
+        run_id: String,
+        phase_status: String,
+    },
 
     /// Current phase is paused awaiting operator approval.
     WorkflowPaused {
@@ -125,13 +131,19 @@ impl ControllerError {
             ControllerError::InvalidWorkflowDefinition { message } => {
                 format!("Invalid workflow definition: {}", message)
             }
-            ControllerError::UnsupportedCriterion { phase_id, criterion_type } => {
+            ControllerError::UnsupportedCriterion {
+                phase_id,
+                criterion_type,
+            } => {
                 format!(
                     "Unsupported criterion '{}' in phase '{}'",
                     criterion_type, phase_id
                 )
             }
-            ControllerError::WorkflowAlreadyStopped { run_id, phase_status } => {
+            ControllerError::WorkflowAlreadyStopped {
+                run_id,
+                phase_status,
+            } => {
                 format!(
                     "Workflow run '{}' is already stopped (status: {})",
                     run_id, phase_status
@@ -297,12 +309,8 @@ impl ControllerError {
             ControllerError::AdapterSubmitFailed { .. } => {
                 "Review adapter error and retry".to_string()
             }
-            ControllerError::CannotReleaseTask { .. } => {
-                "Check adapter_logs.jsonl".to_string()
-            }
-            ControllerError::UnknownWorkflowError { .. } => {
-                "Report issue and retry".to_string()
-            }
+            ControllerError::CannotReleaseTask { .. } => "Check adapter_logs.jsonl".to_string(),
+            ControllerError::UnknownWorkflowError { .. } => "Report issue and retry".to_string(),
         }
     }
 }

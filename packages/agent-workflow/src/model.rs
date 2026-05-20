@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // Workflow Definition
@@ -18,6 +19,50 @@ pub struct WorkflowDefinition {
     pub timeout_policy: TimeoutPolicy,
     pub retry_policy: RetryPolicy,
     pub stop_conditions: Vec<String>,
+}
+
+impl WorkflowDefinition {
+    /// Load a `WorkflowDefinition` from a YAML file path.
+    pub fn from_yaml_file(path: &Path) -> Result<Self, crate::error::ControllerError> {
+        let contents = std::fs::read_to_string(path).map_err(|e| {
+            crate::error::ControllerError::InvalidWorkflowDefinition {
+                message: format!(
+                    "Failed to read workflow file '{}': {}",
+                    path.display(),
+                    e
+                ),
+            }
+        })?;
+
+        let parsed: Self = serde_yaml::from_str(&contents).map_err(|e| {
+            crate::error::ControllerError::InvalidWorkflowDefinition {
+                message: format!("Failed to parse YAML: {}", e),
+            }
+        })?;
+
+        Ok(parsed)
+    }
+
+    /// Load a `WorkflowDefinition` from a JSON file path.
+    pub fn from_json_file(path: &Path) -> Result<Self, crate::error::ControllerError> {
+        let contents = std::fs::read_to_string(path).map_err(|e| {
+            crate::error::ControllerError::InvalidWorkflowDefinition {
+                message: format!(
+                    "Failed to read workflow file '{}': {}",
+                    path.display(),
+                    e
+                ),
+            }
+        })?;
+
+        let parsed: Self = serde_json::from_str(&contents).map_err(|e| {
+            crate::error::ControllerError::InvalidWorkflowDefinition {
+                message: format!("Failed to parse JSON: {}", e),
+            }
+        })?;
+
+        Ok(parsed)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +253,8 @@ stop_conditions:
 
         // Serialize back to YAML and verify it round-trips
         let serialized = serde_yaml::to_string(&parsed).expect("serialize to yaml");
-        let reparsed: WorkflowDefinition = serde_yaml::from_str(&serialized).expect("re-parse yaml");
+        let reparsed: WorkflowDefinition =
+            serde_yaml::from_str(&serialized).expect("re-parse yaml");
         assert_eq!(reparsed.workflow_id, "api_deployment_v1");
         assert_eq!(reparsed.phases.len(), 1);
     }

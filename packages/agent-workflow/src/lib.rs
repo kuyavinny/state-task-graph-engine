@@ -33,6 +33,7 @@ pub mod model;
 pub mod paths;
 pub mod response;
 pub mod run_state;
+pub mod validate;
 
 /// Re-export key types at crate root.
 pub use cli::Cli;
@@ -45,6 +46,7 @@ pub use model::{
 pub use paths::ProjectPaths;
 pub use response::{FailureEnvelope, SuccessEnvelope};
 pub use run_state::{
-    ApprovalDecision, ApprovalRecord, PhaseHistoryItem, PhaseStatus, RunArtifact, WorkflowRetryCounters,
-    WorkflowRunState,
+    ApprovalDecision, ApprovalRecord, PhaseHistoryItem, PhaseStatus, RunArtifact,
+    WorkflowRetryCounters, WorkflowRunState,
 };
+pub use validate::validate_workflow_definition;
