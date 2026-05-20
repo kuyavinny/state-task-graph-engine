@@ -312,7 +312,7 @@ fn submit_result(
     let (config, profile, actor) = load_profile(profile_name)?;
 
     // Build packet from file or convenience flags
-    let packet = if let Some(path) = result_file {
+    let mut packet = if let Some(path) = result_file {
         let content = std::fs::read_to_string(path)?;
         serde_yaml::from_str::<CanonicalResultPacket>(&content)?
     } else {
@@ -330,6 +330,29 @@ fn submit_result(
             raw_agent_output_path: None,
         }
     };
+
+    // Enforce consistency between file and CLI flags
+    if let Some(cli_task_id) = task_id {
+        if !packet.task_id.is_empty() && packet.task_id != cli_task_id {
+            return Err(AdapterError::InvalidResultPacket {
+                message: format!(
+                    "task_id mismatch: result-file has '{}', CLI has '{}'",
+                    packet.task_id, cli_task_id
+                ),
+            });
+        }
+        if packet.task_id.is_empty() {
+            packet.task_id = cli_task_id.to_string();
+        }
+    }
+    if !packet.actor.is_empty() && packet.actor != actor {
+        return Err(AdapterError::InvalidResultPacket {
+            message: format!(
+                "actor mismatch: result-file has '{}', profile has '{}'",
+                packet.actor, actor
+            ),
+        });
+    }
 
     // Validate packet
     packet.validate()?;
