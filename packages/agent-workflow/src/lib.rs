@@ -44,6 +44,7 @@ pub mod run_state;
 pub mod step_dispatch;
 pub mod step_intake;
 pub mod validate;
+pub mod verification;
 
 /// Re-export key types at crate root.
 pub use adapter_client::{
