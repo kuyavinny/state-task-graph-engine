@@ -26,9 +26,12 @@
 //! - `paths`: Path helpers for `.agent/` directories.
 //! - `config`: Version and configuration constants.
 
+pub mod adapter_client;
 pub mod cli;
 pub mod config;
+pub mod criteria_context;
 pub mod error;
+pub mod graph_client;
 pub mod log;
 pub mod model;
 pub mod paths;
@@ -39,9 +42,16 @@ pub mod run_state;
 pub mod validate;
 
 /// Re-export key types at crate root.
+pub use adapter_client::{
+    AdapterClient, RealAdapterClient, ReleaseResult, RenderResult, SubmitResult, TaskPacket,
+};
 pub use cli::Cli;
 pub use config::version;
+pub use criteria_context::CriteriaContext;
 pub use error::ControllerError;
+pub use graph_client::{
+    GraphStatusClient, GraphValidationResult, RealGraphStatusClient,
+};
 pub use model::{
     ArtifactCriterion, Criterion, GraphStateCriterion, OperatorApprovalCriterion, Phase,
     ResultCriterion, TimeCriterion, WorkflowDefinition,

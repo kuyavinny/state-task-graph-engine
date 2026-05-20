@@ -89,7 +89,23 @@ pub enum ControllerError {
         reason: String,
     },
 
-    // ── Catch-all ─────────────────────────────────────────────────
+    // ── Adapter client errors ─────────────────────────────────────
+    /// Adapter command returned a non-zero exit or malformed JSON.
+    AdapterClientError {
+        command: String,
+        message: String,
+    },
+
+    /// Graph status command returned a non-zero exit or malformed JSON.
+    GraphClientError {
+        command: String,
+        message: String,
+    },
+
+    /// Binary not found on the system (agent-adapter or stage).
+    BinaryNotFound {
+        binary: String,
+    },
     /// Uncategorized internal error.
     UnknownWorkflowError { message: String },
 }
@@ -113,6 +129,9 @@ impl ControllerError {
             ControllerError::ResultSubmissionBlocked { .. } => "RESULT_SUBMISSION_BLOCKED",
             ControllerError::AdapterSubmitFailed { .. } => "ADAPTER_SUBMIT_FAILED",
             ControllerError::CannotReleaseTask { .. } => "CANNOT_RELEASE_TASK",
+            ControllerError::AdapterClientError { .. } => "ADAPTER_CLIENT_ERROR",
+            ControllerError::GraphClientError { .. } => "GRAPH_CLIENT_ERROR",
+            ControllerError::BinaryNotFound { .. } => "BINARY_NOT_FOUND",
             ControllerError::UnknownWorkflowError { .. } => "UNKNOWN_WORKFLOW_ERROR",
         }
     }
@@ -236,6 +255,18 @@ impl ControllerError {
                     task_id, run_id, reason
                 )
             }
+            ControllerError::AdapterClientError { command, message } => {
+                format!("Adapter command '{}' failed: {}", command, message)
+            }
+            ControllerError::GraphClientError { command, message } => {
+                format!("Graph command '{}' failed: {}", command, message)
+            }
+            ControllerError::BinaryNotFound { binary } => {
+                format!(
+                    "Binary '{}' not found in PATH or target directory",
+                    binary
+                )
+            }
             ControllerError::UnknownWorkflowError { message } => {
                 format!("Unknown workflow error: {}", message)
             }
@@ -263,6 +294,9 @@ impl ControllerError {
             ControllerError::ResultSubmissionBlocked { .. } => "FIX_RESULT_PACKET",
             ControllerError::AdapterSubmitFailed { .. } => "RETRY",
             ControllerError::CannotReleaseTask { .. } => "INVESTIGATE_ADAPTER",
+            ControllerError::AdapterClientError { .. } => "INVESTIGATE_ADAPTER",
+            ControllerError::GraphClientError { .. } => "CHECK_GRAPH_STATE",
+            ControllerError::BinaryNotFound { .. } => "INSTALL_BINARY",
             ControllerError::UnknownWorkflowError { .. } => "RETRY",
         }
     }
@@ -310,6 +344,18 @@ impl ControllerError {
                 "Review adapter error and retry".to_string()
             }
             ControllerError::CannotReleaseTask { .. } => "Check adapter_logs.jsonl".to_string(),
+            ControllerError::AdapterClientError { .. } => {
+                "Check adapter configuration and binary path".to_string()
+            }
+            ControllerError::GraphClientError { .. } => {
+                "Check graph engine state and binary path".to_string()
+            }
+            ControllerError::BinaryNotFound { binary } => {
+                format!(
+                    "Build or install '{}' and ensure it is on PATH",
+                    binary
+                )
+            }
             ControllerError::UnknownWorkflowError { .. } => "Report issue and retry".to_string(),
         }
     }
