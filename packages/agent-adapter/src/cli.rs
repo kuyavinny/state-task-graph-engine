@@ -387,25 +387,7 @@ fn submit_result(
         });
     }
 
-    // Validate artifact paths and sizes against policy
-    let project_root =
-        std::env::current_dir().map_err(|e| AdapterError::ArtifactPolicyViolation {
-            message: format!("failed to get working directory: {}", e),
-        })?;
-    let evidence_paths: Vec<Option<String>> = packet
-        .evidence
-        .iter()
-        .map(|e| e.artifact_path.clone())
-        .collect();
-    crate::artifact::validate_artifacts(
-        &packet.artifacts,
-        &evidence_paths,
-        &packet.raw_agent_output_path,
-        &project_root,
-        &profile.policies.artifact_policy,
-    )?;
-
-    // Check permissions per status
+    // Check permissions BEFORE artifact validation (defense-in-depth)
     match packet.status.as_str() {
         "success" if !profile.permissions.allow_submit_success => {
             return Err(AdapterError::ProfilePermissionDenied {
@@ -434,6 +416,24 @@ fn submit_result(
         }
         _ => {}
     }
+
+    // Validate artifact paths and sizes against policy
+    let project_root =
+        std::env::current_dir().map_err(|e| AdapterError::ArtifactPolicyViolation {
+            message: format!("failed to get working directory: {}", e),
+        })?;
+    let evidence_paths: Vec<Option<String>> = packet
+        .evidence
+        .iter()
+        .map(|e| e.artifact_path.clone())
+        .collect();
+    crate::artifact::validate_artifacts(
+        &packet.artifacts,
+        &evidence_paths,
+        &packet.raw_agent_output_path,
+        &project_root,
+        &profile.policies.artifact_policy,
+    )?;
 
     let client = build_client(&config, &actor)?;
 

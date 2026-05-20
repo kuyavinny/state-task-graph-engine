@@ -164,7 +164,7 @@ pub fn validate_artifacts(
         let path = Path::new(raw_path);
         let canonical = normalize_and_validate_path(path, project_root)?;
 
-        if is_adapter_artifact(path, project_root) {
+        if is_adapter_artifact(&canonical, project_root) {
             // Adapter artifacts: check individual size limit
             validate_artifact_size(&canonical, policy)?;
             adapter_artifact_paths.push(canonical.clone());
