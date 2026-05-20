@@ -13,6 +13,11 @@ use crate::task_packet::{
     TaskInfo,
 };
 
+/// Default lease TTL (in seconds) used when claiming a task via `get_work`.
+/// The `agent-graph` CLI `Claim` command requires `--ttl-seconds`; this
+/// constant provides a sane default when the caller does not specify one.
+const DEFAULT_CLAIM_TTL_SECONDS: u64 = 300; // 5 minutes
+
 /// High-level client that wraps a [`GraphRunner`] to provide typed methods
 /// for graph engine interactions: `next`, `claim`, `summarize`, `release`.
 ///
@@ -81,18 +86,28 @@ impl GraphEngineClient {
         }
     }
 
-    /// Call `graph-engine claim <task_id> <actor> --revision <rev>` and return the result.
+    /// Call `graph-engine claim <task_id> <actor> --ttl-seconds <ttl>` and return the result.
     ///
     /// Returns `Ok(GraphSuccessEnvelope<GraphClaimPayload>)` on successful claim.
     /// Returns appropriate error on failure, including normalizing `STALE_REVISION`
     /// to `AdapterError::ContextStaleRefetchRequired`.
+    ///
+    /// **Note:** The spec originally used `--revision`, but the actual `agent-graph`
+    /// CLI `Claim` command only accepts `--ttl-seconds`.  This method was updated
+    /// to match the real CLI contract.
     pub fn claim(
         &self,
         task_id: &str,
         actor: &str,
-        revision: u64,
+        ttl_seconds: u64,
     ) -> Result<GraphSuccessEnvelope<GraphClaimPayload>, AdapterError> {
-        let args = ["claim", task_id, actor, "--revision", &revision.to_string()];
+        let args = [
+            "claim",
+            task_id,
+            actor,
+            "--ttl-seconds",
+            &ttl_seconds.to_string(),
+        ];
         match self.runner.execute(&args) {
             Ok(raw) => {
                 if is_graph_failure(&raw) {
@@ -390,10 +405,10 @@ impl GraphEngineClient {
             Some(id) => id,
             None => return Err(AdapterError::NoWorkAvailable),
         };
-        let pre_claim_revision = next_data.graph_revision;
+        let _pre_claim_revision = next_data.graph_revision; // unused — claim no longer takes revision
 
         // 2. Claim the task
-        let claim_env = self.claim(&task_id, actor, pre_claim_revision)?;
+        let claim_env = self.claim(&task_id, actor, DEFAULT_CLAIM_TTL_SECONDS)?;
         let claim_data = claim_env.data;
         let post_claim_revision = claim_data.graph_revision;
 
@@ -595,12 +610,12 @@ mod tests {
     fn claim_returns_success() {
         let mut runner = MockRunner::new();
         runner.set_response(
-            "claim t1 claude --revision 7",
+            "claim t1 claude --ttl-seconds 300",
             r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"claude","graph_revision":8}}"#,
         );
 
         let client = GraphEngineClient::new(Box::new(runner));
-        let result = client.claim("t1", "claude", 7).unwrap();
+        let result = client.claim("t1", "claude", 300).unwrap();
         assert_eq!(result.status, "success");
         assert!(result.data.claimed);
         assert_eq!(result.data.graph_revision, 8);
@@ -611,7 +626,7 @@ mod tests {
         let mut runner = MockRunner::new();
         runner.set_force_stale();
         let client = GraphEngineClient::new(Box::new(runner));
-        let result = client.claim("t1", "claude", 7);
+        let result = client.claim("t1", "claude", 300);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().error_code(),
@@ -623,11 +638,11 @@ mod tests {
     fn claim_maps_unknown_failure_to_claim_failed() {
         let mut runner = MockRunner::new();
         runner.set_response(
-            "claim t1 claude --revision 7",
+            "claim t1 claude --ttl-seconds 300",
             r#"{"status":"failure","code":"ALREADY_CLAIMED","message":"Task t1 is already claimed"}"#,
         );
         let client = GraphEngineClient::new(Box::new(runner));
-        let result = client.claim("t1", "claude", 7);
+        let result = client.claim("t1", "claude", 300);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().error_code(),
@@ -697,7 +712,7 @@ mod tests {
             r#"{"status":"success","data":{"task_id":"t42","title":"Test task","description":"desc","graph_revision":1,"lease_expiration":"2026-01-01T00:00:00Z","dependencies":[]}}"#,
         );
         runner.set_response(
-            "claim t42 test-agent --revision 1",
+            "claim t42 test-agent --ttl-seconds 300",
             r#"{"status":"success","data":{"claimed":true,"task_id":"t42","actor":"test-agent","graph_revision":2}}"#,
         );
         runner.set_response(
@@ -711,7 +726,7 @@ mod tests {
         let next_result = client.next().unwrap();
         assert_eq!(next_result.data.task_id, Some("t42".to_string()));
 
-        let claim_result = client.claim("t42", "test-agent", 1).unwrap();
+        let claim_result = client.claim("t42", "test-agent", 300).unwrap();
         assert!(claim_result.data.claimed);
 
         let summarize_result = client.summarize("t42").unwrap();
@@ -724,12 +739,12 @@ mod tests {
         // are passed through correctly (no shell interpolation issues)
         let mut runner = MockRunner::new();
         runner.set_response(
-            "claim task-1_v2.0 agent-name --revision 42",
+            "claim task-1_v2.0 agent-name --ttl-seconds 300",
             r#"{"status":"success","data":{"claimed":true,"task_id":"task-1_v2.0","actor":"agent-name","graph_revision":43}}"#,
         );
 
         let client = GraphEngineClient::new(Box::new(runner));
-        let result = client.claim("task-1_v2.0", "agent-name", 42);
+        let result = client.claim("task-1_v2.0", "agent-name", 300);
         assert!(result.is_ok());
     }
 
@@ -767,7 +782,7 @@ mod tests {
         runner.set_force_stale();
 
         let client = GraphEngineClient::with_logger(Box::new(runner), logger, "test-actor");
-        let _ = client.claim("t1", "agent", 1); // will fail with STALE_REVISION
+        let _ = client.claim("t1", "agent", 300); // will fail with STALE_REVISION
 
         let content = std::fs::read_to_string(dir.path().join("test_log.jsonl")).unwrap();
         let entry: crate::logger::LogEntry = serde_json::from_str(content.trim()).unwrap();
@@ -852,7 +867,7 @@ mod tests {
             r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"lease_expiration":"2026-01-01T00:00:00Z","dependencies":[]}}"#,
         );
         runner.set_response(
-            "claim t1 test-agent --revision 42",
+            "claim t1 test-agent --ttl-seconds 300",
             r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"test-agent","graph_revision":43}}"#,
         );
         runner.set_response(
@@ -891,7 +906,7 @@ mod tests {
             r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"dependencies":[]}}"#,
         );
         runner.set_response(
-            "claim t1 test-agent --revision 42",
+            "claim t1 test-agent --ttl-seconds 300",
             r#"{"status":"failure","code":"ALREADY_CLAIMED","message":"task t1 is already claimed"}"#,
         );
 
@@ -912,7 +927,7 @@ mod tests {
             r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"dependencies":[]}}"#,
         );
         runner.set_response(
-            "claim t1 test-agent --revision 42",
+            "claim t1 test-agent --ttl-seconds 300",
             r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"test-agent","graph_revision":43}}"#,
         );
         runner.set_response(
@@ -943,7 +958,7 @@ mod tests {
             r#"{"status":"success","data":{"task_id":"t1","title":"Do it","description":"desc","graph_revision":42,"dependencies":[]}}"#,
         );
         runner.set_response(
-            "claim t1 test-agent --revision 42",
+            "claim t1 test-agent --ttl-seconds 300",
             r#"{"status":"success","data":{"claimed":true,"task_id":"t1","actor":"test-agent","graph_revision":0}}"#,
         );
         runner.set_response(
