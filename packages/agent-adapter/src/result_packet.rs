@@ -63,6 +63,11 @@ impl CanonicalResultPacket {
     ///
     /// Returns Ok(()) on valid packets; Err(AdapterError::InvalidResultPacket) otherwise.
     pub fn validate(&self) -> Result<(), crate::error::AdapterError> {
+        if self.task_id.is_empty() {
+            return Err(crate::error::AdapterError::InvalidResultPacket {
+                message: "task_id must be non-empty".to_string(),
+            });
+        }
         if !RESULT_STATUSES.contains(&self.status.as_str()) {
             return Err(crate::error::AdapterError::InvalidResultPacket {
                 message: format!(
@@ -116,6 +121,13 @@ mod tests {
     fn invalid_status_fails() {
         let mut p = valid_success_packet();
         p.status = "unknown".to_string();
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn empty_task_id_fails() {
+        let mut p = valid_success_packet();
+        p.task_id = String::new();
         assert!(p.validate().is_err());
     }
 
